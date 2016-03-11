@@ -97,7 +97,55 @@ class UndoubleCommandController extends AbstractCommandController
                 if (!$this->isDryRun) {
                     $this->updateReferencesToFile($record);
                 }
-                $this->successMessage('Removing file from _migrated folder.');
+            }
+            $this->databaseConnection->sql_free_result($result);
+            $this->horizontalLine('info');
+            $this->message('Removed ' . $this->successString($total) . ' files from the _migrated folder.');
+            $this->message('Freed ' . $this->successString(GeneralUtility::formatSize($freedBytes)));
+        } catch (\RuntimeException $exception) {
+            $this->errorMessage($exception->getMessage());
+        }
+    }
+
+    /**
+     * Remove files from _migrated folder
+     *
+     * Removes files with counterparts outside of the _migrated folder and without references
+     * in sys_file_reference from the _migrated folder.
+     *
+     * @since 1.1.0
+     *
+     * @param bool $dryRun Do a test run, no modifications.
+     * @param bool $iKnowWhatImDoing Do you know what you are doing?
+     *
+     * @return void
+     */
+    public function RemoveMigratedFilesCommand($dryRun = false, $iKnowWhatImDoing = false)
+    {
+        $this->headerMessage('Removing files without references from _migrated folder');
+        if (!$iKnowWhatImDoing) {
+            $this->warningMessage('This will remove files from the _migrated folder.');
+            $this->warningMessage('Are you sure you don\'t have any link fields or rich text fields that have references');
+            $this->warningMessage('to these files? This task only checks the sys_file_reference table, not the various link');
+            $this->warningMessage('and rte fields. Those fields do not create entries in the sys_file_reference table.');
+            $this->warningMessage('');
+            $this->warningMessage('This extension does not yet support those migrations.');
+            $this->warningMessage('');
+            $this->warningMessage('Please specify the option --i-know-what-im-doing');
+            exit();
+        }
+        $this->isDryRun = $dryRun;
+        $counter = 0;
+        $freedBytes = 0;
+        try {
+            $result = $this->getDocumentsWithMatchingSha1WithoutReferences();
+            $total = $this->databaseConnection->sql_num_rows($result);
+            $this->infoMessage(
+                'Found ' . $total . ' records in _migrated folder that have counterparts outside of there'
+            );
+            while ($record = $this->databaseConnection->sql_fetch_assoc($result)) {
+                $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
+                $this->infoMessage($progress . ' Removing ' . $record['oldIdentifier']);
                 if (!$this->isDryRun) {
                     try {
                         $this->storage->deleteFile($this->storage->getFile($record['oldIdentifier']));
@@ -130,11 +178,18 @@ class UndoubleCommandController extends AbstractCommandController
      * @param string $table The table to work on. Default: `tt_content`.
      * @param string $field The field to work on. Default: `bodytext`.
      * @param bool $dryRun Do a test run, no modifications.
+     * @param bool $iKnowWhatImDoing Do you know what you are doing?
      *
      */
-    public function RichTextReferencesCommand($table = 'tt_content', $field = 'bodytext', $dryRun = false)
+    public function RichTextReferencesCommand_unfinished($table = 'tt_content', $field = 'bodytext', $dryRun = false, $iKnowWhatImDoing = false)
     {
         $this->headerMessage('Normalizing references from ' . $table . ' -> ' . $field);
+        if (!$iKnowWhatImDoing) {
+            $this->warningMessage('This command is experimental. Please ensure you have a backup of your database before continuing.');
+            $this->warningMessage('');
+            $this->warningMessage('Please specify the option --i-know-what-im-doing');
+            exit();
+        }
 
         $table = preg_replace('/[^a-zA-Z0-9_-]/', '', $table);
         $field = preg_replace('/[^a-zA-Z0-9_-]/', '', $field);
@@ -148,7 +203,7 @@ class UndoubleCommandController extends AbstractCommandController
         );
         while ($record = $this->databaseConnection->sql_fetch_assoc($result)) {
             $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
-            $richTextRecords = $this->getRichTextFieldsWithReferences($table, $field, $record['oldIdentifier']);
+            $richTextRecords = $this->getRichTextFieldsWithReferences($table, $field, $record['oldUid']);
             if (count($richTextRecords)) {
                 $this->infoMessage('Found ' . count($richTextRecords) . ' ' . $table . ' records that have a "<link>" tag in the field ' . $field);
                 $this->infoMessage($progress . ' Updating references for ' . $record['oldIdentifier']);
@@ -193,6 +248,41 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
+     * Get database result pointer to sys_file records in the _migrated folder with sha1 matching documents outside of
+     * the _migrated folder but have no references in sys_file_reference.
+     *
+     * @return \mysqli_result
+     */
+    protected function getDocumentsWithMatchingSha1WithoutReferences()
+    {
+        $result = $this->databaseConnection->sql_query('SELECT
+            migrated.size,
+            migrated.uid         AS oldUid,
+            alternate.uid        AS newUid,
+            migrated.identifier  AS oldIdentifier,
+            alternate.identifier AS newIdentifier,
+            sys_file_reference.uid_local
+        FROM sys_file AS migrated
+            JOIN sys_file AS alternate
+                ON migrated.sha1 = alternate.sha1
+            LEFT OUTER JOIN sys_file_reference
+                ON sys_file_reference.uid_local = migrated.uid
+        WHERE
+            NOT migrated.uid = alternate.uid
+            AND migrated.identifier LIKE "/_migrated/%"
+            AND alternate.identifier NOT LIKE "/_migrated/%"
+            AND sys_file_reference.uid_local IS NULL
+        GROUP BY
+            migrated.uid;
+            ');
+        if ($result === null) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        }
+
+        return $result;
+    }
+
+    /**
      * Get rich text fields with references
      *
      * @param string $table
@@ -203,6 +293,35 @@ class UndoubleCommandController extends AbstractCommandController
      */
     private function getRichTextFieldsWithReferences($table, $field, $uid)
     {
+        $uid = (int)$uid;
+        $result = false;
+
+        $rows = $this->databaseConnection->exec_SELECTgetRows(
+            'uid, ' . $field,
+            $table,
+            'deleted=0 AND (' . $field . ' LIKE  "%<link file:' . $uid . '%" OR ' . $field . ' LIKE "%&lt;link file:' . $uid . '%")'
+        );
+        $this->warningMessage($this->databaseConnection->debug_lastBuiltQuery);
+        if ($rows === null) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            $result = $rows;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Get rich text fields with references
+     *
+     * @param string $table
+     * @param string $field
+     * @param int $uid
+     *
+     * @return mixed
+     */
+    private function getRichTextFieldsWithReferencesPrepared($table, $field, $uid)
+    {
         $rows = [];
         $uid = (int)$uid;
 
@@ -211,12 +330,12 @@ class UndoubleCommandController extends AbstractCommandController
             $this->richTextStatements[$table . '-' . $field] = $this->databaseConnection->prepare_SELECTquery(
                 'uid, ' . $field,
                 $table,
-                'deleted=0 AND (' . $field . ' LIKE ? OR ' . $field . ' LIKE ?)'
+                'deleted=0 AND (' . $field . ' LIKE :like1 OR ' . $field . ' LIKE :like2)'
             );
         }
         $this->richTextStatements[$key]->execute(array(
-            '"%<link file:' . $uid . '%"',
-            '"%&lt;link file:' . $uid . '%"'
+            ':like1' => '%<link file:' . $uid . '%',
+            ':like2' => '%&lt;link file:' . $uid . '%'
         ));
 
         $result = $this->richTextStatements[$key]->fetch();
