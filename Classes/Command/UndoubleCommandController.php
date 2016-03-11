@@ -37,9 +37,35 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
 class UndoubleCommandController extends AbstractCommandController
 {
     /**
+     * Is this a dry run?
+     *
+     * @var bool
+     */
+    protected $isDryRun = false;
+
+    /**
      * @var \TYPO3\CMS\Core\Resource\ResourceStorage
      */
     protected $storage;
+
+    /**
+     * Rich Text prepared queries
+     *
+     * @var array<PreparedStatement>
+     */
+    protected $richTextStatements = [];
+
+    /**
+     * Initialize the storage repository.
+     */
+    public function __construct()
+    {
+        parent::__construct();
+        /** @var $storageRepository \TYPO3\CMS\Core\Resource\StorageRepository */
+        $storageRepository = GeneralUtility::makeInstance('TYPO3\\CMS\\Core\\Resource\\StorageRepository');
+        $storages = $storageRepository->findAll();
+        $this->storage = $storages[0];
+    }
 
     /**
      * Normalize _migrated folder
@@ -49,14 +75,14 @@ class UndoubleCommandController extends AbstractCommandController
      *
      * @since 1.0.0
      *
-     * @param bool $dryRun
+     * @param bool $dryRun Do a test run, no modifications.
      *
      * @return void
      */
     public function MigratedFilesCommand($dryRun = false)
     {
         $this->headerMessage('Normalizing _migrated folder');
-        $this->init();
+        $this->isDryRun = $dryRun;
         $counter = 0;
         $freedBytes = 0;
         try {
@@ -68,11 +94,11 @@ class UndoubleCommandController extends AbstractCommandController
             while ($record = $this->databaseConnection->sql_fetch_assoc($result)) {
                 $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
                 $this->infoMessage($progress . ' Updating references for ' . $record['oldIdentifier']);
-                if (!$dryRun) {
+                if (!$this->isDryRun) {
                     $this->updateReferencesToFile($record);
                 }
                 $this->successMessage('Removing file from _migrated folder.');
-                if (!$dryRun) {
+                if (!$this->isDryRun) {
                     try {
                         $this->storage->deleteFile($this->storage->getFile($record['oldIdentifier']));
                         $freedBytes += $record['size'];
@@ -97,21 +123,48 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
-     * Initialize the storage repository.
+     * Normalize references made from rich text fields
+     *
+     * @since 1.1.0
+     *
+     * @param string $table The table to work on. Default: `tt_content`.
+     * @param string $field The field to work on. Default: `bodytext`.
+     * @param bool $dryRun Do a test run, no modifications.
+     *
      */
-    public function init()
+    public function RichTextReferencesCommand($table = 'tt_content', $field = 'bodytext', $dryRun = false)
     {
-        /** @var $storageRepository \TYPO3\CMS\Core\Resource\StorageRepository */
-        $storageRepository = GeneralUtility::makeInstance('TYPO3\\CMS\\Core\\Resource\\StorageRepository');
-        $storages = $storageRepository->findAll();
-        $this->storage = $storages[0];
+        $this->headerMessage('Normalizing references from ' . $table . ' -> ' . $field);
+
+        $table = preg_replace('/[^a-zA-Z0-9_-]/', '', $table);
+        $field = preg_replace('/[^a-zA-Z0-9_-]/', '', $field);
+        $this->isDryRun = $dryRun;
+        $counter = 0;
+        $freedBytes = 0;
+        $result = $this->getDocumentsWithMatchingSha1();
+        $total = $this->databaseConnection->sql_num_rows($result);
+        $this->infoMessage(
+            'Found ' . $total . ' records in _migrated folder that have counterparts outside of there'
+        );
+        while ($record = $this->databaseConnection->sql_fetch_assoc($result)) {
+            $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
+            $richTextRecords = $this->getRichTextFieldsWithReferences($table, $field, $record['oldIdentifier']);
+            if (count($richTextRecords)) {
+                $this->infoMessage('Found ' . count($richTextRecords) . ' ' . $table . ' records that have a "<link>" tag in the field ' . $field);
+                $this->infoMessage($progress . ' Updating references for ' . $record['oldIdentifier']);
+                $this->updateRichTextFields($table, $field, $richTextRecords, $record);
+            }
+        }
+        $this->databaseConnection->sql_free_result($result);
+        $this->horizontalLine('info');
+        $this->message('Removed ' . $this->successString($total) . ' files from the _migrated folder.');
+        $this->message('Freed ' . $this->successString(GeneralUtility::formatSize($freedBytes)));
     }
 
     /**
      * Get database result pointer to sys_file records in the _migrated folder with sha1 matching documents outside of
      * the _migrated folder.
      *
-     * @throws \RuntimeException
      * @return \mysqli_result
      */
     protected function getDocumentsWithMatchingSha1()
@@ -133,7 +186,117 @@ class UndoubleCommandController extends AbstractCommandController
             migrated.uid
         ;');
         if ($result === null) {
-            throw new \RuntimeException('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        }
+
+        return $result;
+    }
+
+    /**
+     * Get rich text fields with references
+     *
+     * @param string $table
+     * @param string $field
+     * @param int $uid
+     *
+     * @return mixed
+     */
+    private function getRichTextFieldsWithReferences($table, $field, $uid)
+    {
+        $rows = [];
+        $uid = (int)$uid;
+
+        $key = $table . '-' . $field;
+        if (!isset($this->richTextStatements[$key])) {
+            $this->richTextStatements[$table . '-' . $field] = $this->databaseConnection->prepare_SELECTquery(
+                'uid, ' . $field,
+                $table,
+                'deleted=0 AND (' . $field . ' LIKE ? OR ' . $field . ' LIKE ?)'
+            );
+        }
+        $this->richTextStatements[$key]->execute(array(
+            '"%<link file:' . $uid . '%"',
+            '"%&lt;link file:' . $uid . '%"'
+        ));
+
+        $result = $this->richTextStatements[$key]->fetch();
+        while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
+            $rows[] = $row;
+        }
+        $this->databaseConnection->sql_free_result($result);
+        if ($rows === null) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            $result = $rows;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Update rich text fields with new references
+     *
+     * @param string $table
+     * @param string $field
+     * @param array $richTextRecords
+     * @param array $migrationData
+     *
+     * @return mixed
+     */
+    private function updateRichTextFields($table, $field, array $richTextRecords, array $migrationData)
+    {
+        $table = $this->databaseConnection->escapeStrForLike($table, $table);
+        $field = $this->databaseConnection->escapeStrForLike($field, $table);
+        $result = [];
+
+        foreach ($richTextRecords as $rec) {
+            $originalContent = $rec[$field];
+            $finalContent = $originalContent;
+            $results = array();
+            preg_match_all(
+                '/(?:<link file ([0-9]+)([^>]*)?>(.*?)<\/link file>|&lt;link file ([0-9]+)(.*?)?&gt;(.*?)&lt;\/link file&gt;)/',
+                $originalContent,
+                $results,
+                PREG_SET_ORDER
+            );
+            if (count($results)) {
+                foreach ($results as $result) {
+                    $searchString = $result[0];
+                    $linkClass = '';
+                    $linkTarget = '';
+                    $linkText = '';
+                    $linkTitle = '';
+                    // Match for <link file
+                    if ((int)$result[1] > 0) {
+                        // see EXT:dam/link filetag/class.tx_dam_rtetransform_link filetag.php
+                        list($linkTarget, $linkClass, $linkTitle) = explode(' ', trim($result[2]), 3);
+                        $linkText = $result[3];
+                    }
+                    // Match for &lt;link file
+                    $useEntities = ((int)$result[4] > 0);
+                    if ($useEntities) {
+                        // see EXT:dam/link filetag/class.tx_dam_rtetransform_link filetag.php
+                        list($linkTarget, $linkClass, $linkTitle) = explode(' ', trim($result[5]), 3);
+                        $linkText = $result[6];
+                    }
+                    $openingBracket = $useEntities ? '&lt;' : '<';
+                    $closingBracket = $useEntities ? '&gt;' : '>';
+                    $replaceString = $openingBracket . 'link file:' . $migrationData['oldUid'] . ' ' . $linkTarget . ' ' . $linkClass . ' ' . $linkTitle . ' ' . $closingBracket . $linkText . $openingBracket . '/link' . $closingBracket;
+                    $finalContent = str_replace($searchString, $replaceString, $finalContent);
+                }
+                // update the record
+                if ($finalContent !== $originalContent) {
+                    if (!$this->isDryRun) {
+                        $this->databaseConnection->exec_UPDATEquery(
+                            $table,
+                            'uid=' . $rec['uid'],
+                            array($field => $finalContent)
+                        );
+
+                    }
+                    $this->infoMessage('Updated ' . $table . ':' . $rec['uid'] . ' with: ' . $finalContent);
+                }
+            }
         }
 
         return $result;
@@ -154,7 +317,7 @@ class UndoubleCommandController extends AbstractCommandController
             array('uid_local' => (int)$identifiers['newUid'])
         );
         if ($result === null) {
-            throw new \RuntimeException('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
         }
     }
 }
