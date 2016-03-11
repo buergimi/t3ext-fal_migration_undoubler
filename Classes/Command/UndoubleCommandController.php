@@ -129,7 +129,6 @@ class UndoubleCommandController extends AbstractCommandController
             NOT migrated.uid = alternate.uid
             AND migrated.identifier LIKE "/_migrated/%"
             AND alternate.identifier NOT LIKE "/_migrated/%"
-            AND migrated.deleted = 0
         GROUP BY
             migrated.uid
         ;');
@@ -153,14 +152,6 @@ class UndoubleCommandController extends AbstractCommandController
             'sys_file_reference',
             'uid_local = ' . (int)$identifiers['oldUid'],
             array('uid_local' => (int)$identifiers['newUid'])
-        );
-        if ($result === null) {
-            throw new \RuntimeException('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
-        }
-        $result = $this->databaseConnection->exec_UPDATEquery(
-            'sys_file',
-            'uid = ' . (int)$identifiers['oldUid'],
-            array('deleted' => 1)
         );
         if ($result === null) {
             throw new \RuntimeException('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
