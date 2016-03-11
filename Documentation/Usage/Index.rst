@@ -13,6 +13,10 @@
 Usage
 =====
 
+WAIT!
+=====
+*_Please do not use yet! The migrations in link and RTE fields are missing_*
+
 Ensure the _cli_lowlevel user has the proper permissions
 ========================================================
 

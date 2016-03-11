@@ -1,6 +1,8 @@
 # TYPO3 extension: fal_migration_undoubler
 Finds documents outside of the _migrated folder, updates references to point to those files and removes the redundant file from the _migrated folder.
 
+*_Please do not use yet! The migrations in link and RTE fields are missing_*
+
 Clone it
 
 ```bash

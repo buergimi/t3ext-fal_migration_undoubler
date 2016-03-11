@@ -22,7 +22,7 @@ fal_migration_undoubler
       en
 
 :Description:
-      Manual for FAL _migration undoubler.
+      Manual for FAL _migration undoubler. *_Please do not use yet! The migrations in link and RTE fields are missing_*
 
 :Keywords:
       fal_migration_undoubler, FAL, cleaner
