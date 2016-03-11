@@ -1,0 +1,26 @@
+{
+  "name": "maxserv/fal_migration_undoubler",
+  "type": "typo3-cms-extension",
+  "description": "Finds documents outside of the _migrated folder, updates references to point to those files and removes the redundant file from the _migrated folder.",
+  "keywords": [
+    "TYPO3",
+    "FAL",
+    "cleaner"
+  ],
+  "support": {
+    "issues": "https://github.com/MaxServ/t3ext-fal_migration_undoubler/issues"
+  },
+  "require": {
+    "typo3/cms-core": ">=6.2.6,<8.0"
+  },
+  "replace": {
+    "fal_migration_undoubler": "self.version",
+    "typo3-ter/fal_migration_undoubler": "self.version"
+  },
+  "autoload": {
+    "psr-4": {
+      "MaxServ\\FalMigrationUndoubler\\": "Classes/"
+    }
+  },
+  "license": "GPL-2.0+"
+}
