@@ -1,8 +1,6 @@
 # TYPO3 extension: fal_migration_undoubler
 Finds documents outside of the _migrated folder, updates references to point to those files and removes the redundant file from the _migrated folder.
 
-*_Please do not use yet! The migrations in link and RTE fields are missing_*
-
 Clone it
 
 ```bash
@@ -15,7 +13,7 @@ Or install it using composer:
 composer config repositories.fal_migration_undoubler vcs https://github.com/MaxServ/t3ext-fal_migration_undoubler.git
 composer require maxserv/fal_migration_undoubler
 ```
-More information on [usage](Documentation/Usage/Index.rst) can be found in the [documentation folder](Documentation/Index.rst).
+More information on [usage](Documentation/Usage/Index.rst) can be found in the [command reference](Documentation/Usage/Index.rst).
 
 ##Usage
 
