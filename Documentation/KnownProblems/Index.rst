@@ -13,8 +13,6 @@
 Known problems
 ==============
 
-*_Please do not use yet! The migrations in link and RTE fields are missing_*
-
 If you find any problems, please report them to us by email.
 
 Please take some time and make a proper report stating at least:

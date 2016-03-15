@@ -52,7 +52,6 @@ if (@exec('tput cols')) {
  */
 class AbstractCommandController extends CommandController
 {
-
     /**
      * Database connection
      *

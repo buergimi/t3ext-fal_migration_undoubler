@@ -39,24 +39,34 @@ class UndoubleCommandController extends AbstractCommandController
     /**
      * Is this a dry run?
      *
+     * @since 1.0.0
+     *
      * @var bool
      */
     protected $isDryRun = false;
 
     /**
+     * Fields with a softref configuration in the TCA
+     *
+     * @since 1.1.0
+     *
+     * @var array
+     */
+    protected $softRefFields = ['typolink' => [], 'typolink_tag' => []];
+
+    /**
+     * A Resource storage
+     *
+     * @since 1.0.0
+     *
      * @var \TYPO3\CMS\Core\Resource\ResourceStorage
      */
     protected $storage;
 
     /**
-     * Rich Text prepared queries
-     *
-     * @var array<PreparedStatement>
-     */
-    protected $richTextStatements = [];
-
-    /**
      * Initialize the storage repository.
+     *
+     * @since 1.0.0
      */
     public function __construct()
     {
@@ -65,6 +75,135 @@ class UndoubleCommandController extends AbstractCommandController
         $storageRepository = GeneralUtility::makeInstance('TYPO3\\CMS\\Core\\Resource\\StorageRepository');
         $storages = $storageRepository->findAll();
         $this->storage = $storages[0];
+        $this->findSoftRefFields();
+    }
+
+
+    /**
+     * Update typolink enabled fields
+     *
+     * Finds rich text fields with file references. If these links point to migratable files, they will be updated. The
+     * TCA is inspected and all fields with a softref confiugration of type `typolink` will be processed. You can
+     * also specify a table and field to process just that field.
+     *
+     * @since 1.1.0
+     *
+     * @param string $table The table to work on. Default: ``.
+     * @param string $field The field to work on. Default: ``.
+     * @param bool $dryRun Do a test run, no modifications.
+     *
+     * @return void
+     */
+    public function updateTypolinkFieldsCommand($table = '', $field = '', $dryRun = false)
+    {
+
+        $table = preg_replace('/[^a-zA-Z0-9_-]/', '', $table);
+        $field = preg_replace('/[^a-zA-Z0-9_-]/', '', $field);
+        if ($table !== '' && $field !== '') {
+            $tableAndFieldMap = [$table => [$field]];
+        } else {
+            $tableAndFieldMap = $this->softRefFields['typolink'];
+        }
+
+        $this->isDryRun = $dryRun;
+        $counter = 0;
+        $updateCounter = 0;
+        $migratableFiles = $this->getMigratableDocuments();
+        $uidMap = [];
+        foreach ($migratableFiles as $migratableFile) {
+            $uidMap[(int)$migratableFile['oldUid']] = (int)$migratableFile['newUid'];
+        }
+        $total = count($migratableFiles);
+        $this->infoMessage(
+            'Found ' . $total . ' migratable records'
+        );
+        if (!$total) {
+            exit();
+        }
+
+        foreach ($tableAndFieldMap as $table => $fields) {
+            foreach ($fields as $field) {
+                $this->headerMessage('Updating typolink fields ' . $table . ' -> ' . $field);
+                $typoLinkRows = $this->getTypoLinkFieldsWithReferences($table, $field);
+                $totalTypoLink = count($typoLinkRows);
+                $this->message('Found ' . $this->successString($totalTypoLink) . ' ' . $table . ' records that have a "file:" reference in the field ' . $field);
+                if ($totalTypoLink) {
+                    foreach ($typoLinkRows as $typoLinkRow) {
+                        $progress = number_format(100 * (++$counter / $totalTypoLink), 1) . '% of ' . $totalTypoLink;
+                        $updateCount = $this->updateTypoLinkFields($table, $field, $typoLinkRow, $uidMap);
+                        if ($updateCount) {
+                            $this->infoMessage($progress . ' Updated ' . $updateCount . ' references in ' . $table . ':' . $field);
+                        }
+                        $updateCounter += $updateCount;
+                    }
+                }
+            }
+        }
+        $this->horizontalLine('info');
+        $this->message('Updated ' . $this->successString($updateCounter) . ' references.');
+    }
+
+    /**
+     * Update typolink_tag enabled fields
+     *
+     * Finds rich text fields with file references. If these links point to migratable files, they will be updated. The
+     * TCA is inspected and all fields with a softref configuration of type `typolink_tag` will be processed. You can
+     * also specify a table and field to process just that field.
+     *
+     * @since 1.1.0
+     *
+     * @param string $table The table to work on. Default: ``.
+     * @param string $field The field to work on. Default: ``.
+     * @param bool $dryRun Do a test run, no modifications.
+     *
+     * @return void
+     */
+    public function updateTypolinkTagFieldsCommand($table = '', $field = '', $dryRun = false)
+    {
+        $table = preg_replace('/[^a-zA-Z0-9_-]/', '', $table);
+        $field = preg_replace('/[^a-zA-Z0-9_-]/', '', $field);
+        if ($table !== '' && $field !== '') {
+            $tableAndFieldMap = [$table => [$field]];
+        } else {
+            $tableAndFieldMap = $this->softRefFields['typolink_tag'];
+        }
+
+        $this->isDryRun = $dryRun;
+        $counter = 0;
+        $updateCounter = 0;
+        $migratableFiles = $this->getMigratableDocuments();
+        $uidMap = [];
+        foreach ($migratableFiles as $migratableFile) {
+            $uidMap[(int)$migratableFile['oldUid']] = (int)$migratableFile['newUid'];
+        }
+        $total = count($migratableFiles);
+        $this->infoMessage(
+            'Found ' . $total . ' migratable records'
+        );
+        if (!$total) {
+            exit();
+        }
+
+        foreach ($tableAndFieldMap as $table => $fields) {
+            foreach ($fields as $field) {
+                $this->headerMessage('Updating fields from ' . $table . ' -> ' . $field);
+                $typoLinkRows = $this->getTypoLinkTagFieldsWithReferences($table, $field);
+                $totalTypoLink = count($typoLinkRows);
+                $this->message('Found ' . $this->successString($totalTypoLink) . ' ' . $table . ' records that have a "<link>" tag in the field ' . $field);
+                if ($totalTypoLink) {
+                    foreach ($typoLinkRows as $typoLinkRow) {
+                        $progress = number_format(100 * (++$counter / $totalTypoLink), 1) . '% of ' . $totalTypoLink;
+                        $updateCount = $this->updateTypoLinkTagFields($table, $field, $typoLinkRow, $uidMap);
+                        if ($updateCount) {
+                            $this->infoMessage($progress . ' Updated ' . $updateCount . ' references in ' . $table . ':' . $field);
+                        }
+                        $updateCounter += $updateCount;
+                    }
+                }
+            }
+        }
+        $this->horizontalLine('info');
+        $this->message('Updated ' . $this->successString($updateCounter) . ' references.');
     }
 
     /**
@@ -79,34 +218,30 @@ class UndoubleCommandController extends AbstractCommandController
      *
      * @return void
      */
-    public function MigratedFilesCommand($dryRun = false)
+    public function migratedFilesCommand($dryRun = false)
     {
         $this->headerMessage('Normalizing _migrated folder');
         $this->isDryRun = $dryRun;
         $counter = 0;
-        $freedBytes = 0;
         try {
-            $result = $this->getDocumentsWithMatchingSha1();
-            $total = $this->databaseConnection->sql_num_rows($result);
+            $result = $this->getMigratableDocumentsWithReferences();
+            $total = count($result);
             $this->infoMessage(
-                'Found ' . $total . ' records in _migrated folder that have counterparts outside of there'
+                'Found ' . $total . ' records in _migrated folder with references that have counterparts outside of there'
             );
-            while ($record = $this->databaseConnection->sql_fetch_assoc($result)) {
+            foreach ($result as $row) {
                 $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
-                $this->infoMessage($progress . ' Updating references for ' . $record['oldIdentifier']);
+                $this->infoMessage($progress . ' Updating references for ' . $row['oldIdentifier']);
                 if (!$this->isDryRun) {
-                    $this->updateReferencesToFile($record);
+                    $this->updateReferencesToFile($row);
                 }
             }
-            $this->databaseConnection->sql_free_result($result);
             $this->horizontalLine('info');
-            $this->message('Removed ' . $this->successString($total) . ' files from the _migrated folder.');
-            $this->message('Freed ' . $this->successString(GeneralUtility::formatSize($freedBytes)));
+            $this->message('Updated ' . $this->successString($total) . ' references to files from the _migrated folder.');
         } catch (\RuntimeException $exception) {
             $this->errorMessage($exception->getMessage());
         }
     }
-
     /**
      * Remove files from _migrated folder
      *
@@ -120,16 +255,18 @@ class UndoubleCommandController extends AbstractCommandController
      *
      * @return void
      */
-    public function RemoveMigratedFilesCommand($dryRun = false, $iKnowWhatImDoing = false)
+    public function removeMigratedFilesCommand($dryRun = false, $iKnowWhatImDoing = false)
     {
         $this->headerMessage('Removing files without references from _migrated folder');
         if (!$iKnowWhatImDoing) {
             $this->warningMessage('This will remove files from the _migrated folder.');
-            $this->warningMessage('Are you sure you don\'t have any link fields or rich text fields that have references');
-            $this->warningMessage('to these files? This task only checks the sys_file_reference table, not the various link');
-            $this->warningMessage('and rte fields. Those fields do not create entries in the sys_file_reference table.');
+            $this->warningMessage('Are you sure you don\'t have any typolink or typolink_tag enabled fields that may have references');
+            $this->warningMessage('to these files? This task only checks the sys_file_reference table.');
             $this->warningMessage('');
-            $this->warningMessage('This extension does not yet support those migrations.');
+            $this->warningMessage('You can update references to these files by running the commands:');
+            $this->warningMessage('- undouble:migratedfiles');
+            $this->warningMessage('- undouble:updtetypolinkfields');
+            $this->warningMessage('- undouble:updtetypolinktagfields');
             $this->warningMessage('');
             $this->warningMessage('Please specify the option --i-know-what-im-doing');
             exit();
@@ -138,18 +275,18 @@ class UndoubleCommandController extends AbstractCommandController
         $counter = 0;
         $freedBytes = 0;
         try {
-            $result = $this->getDocumentsWithMatchingSha1WithoutReferences();
-            $total = $this->databaseConnection->sql_num_rows($result);
+            $result = $this->getMigratableDocumentsWithoutReferences();
+            $total = count($result);
             $this->infoMessage(
                 'Found ' . $total . ' records in _migrated folder that have counterparts outside of there'
             );
-            while ($record = $this->databaseConnection->sql_fetch_assoc($result)) {
+            foreach ($result as $row) {
                 $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
-                $this->infoMessage($progress . ' Removing ' . $record['oldIdentifier']);
+                $this->infoMessage($progress . ' Removing ' . $row['oldIdentifier']);
                 if (!$this->isDryRun) {
                     try {
-                        $this->storage->deleteFile($this->storage->getFile($record['oldIdentifier']));
-                        $freedBytes += $record['size'];
+                        $this->storage->deleteFile($this->storage->getFile($row['oldIdentifier']));
+                        $freedBytes += $row['size'];
                     } catch (FileOperationErrorException $error) {
                         $this->errorMessage($error->getMessage());
                     } catch (InsufficientFileAccessPermissionsException $error) {
@@ -157,11 +294,8 @@ class UndoubleCommandController extends AbstractCommandController
                         $this->errorMessage('Please edit the _cli_lowlevel user in the backend and ensure this user has access to the _migrated filemount.');
                         exit();
                     }
-                } else {
-                    $freedBytes += $record['size'];
                 }
             }
-            $this->databaseConnection->sql_free_result($result);
             $this->horizontalLine('info');
             $this->message('Removed ' . $this->successString($total) . ' files from the _migrated folder.');
             $this->message('Freed ' . $this->successString(GeneralUtility::formatSize($freedBytes)));
@@ -171,64 +305,20 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
-     * Normalize references made from rich text fields
-     *
-     * @since 1.1.0
-     *
-     * @param string $table The table to work on. Default: `tt_content`.
-     * @param string $field The field to work on. Default: `bodytext`.
-     * @param bool $dryRun Do a test run, no modifications.
-     * @param bool $iKnowWhatImDoing Do you know what you are doing?
-     *
-     */
-    public function RichTextReferencesCommand_unfinished($table = 'tt_content', $field = 'bodytext', $dryRun = false, $iKnowWhatImDoing = false)
-    {
-        $this->headerMessage('Normalizing references from ' . $table . ' -> ' . $field);
-        if (!$iKnowWhatImDoing) {
-            $this->warningMessage('This command is experimental. Please ensure you have a backup of your database before continuing.');
-            $this->warningMessage('');
-            $this->warningMessage('Please specify the option --i-know-what-im-doing');
-            exit();
-        }
-
-        $table = preg_replace('/[^a-zA-Z0-9_-]/', '', $table);
-        $field = preg_replace('/[^a-zA-Z0-9_-]/', '', $field);
-        $this->isDryRun = $dryRun;
-        $counter = 0;
-        $freedBytes = 0;
-        $result = $this->getDocumentsWithMatchingSha1();
-        $total = $this->databaseConnection->sql_num_rows($result);
-        $this->infoMessage(
-            'Found ' . $total . ' records in _migrated folder that have counterparts outside of there'
-        );
-        while ($record = $this->databaseConnection->sql_fetch_assoc($result)) {
-            $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
-            $richTextRecords = $this->getRichTextFieldsWithReferences($table, $field, $record['oldUid']);
-            if (count($richTextRecords)) {
-                $this->infoMessage('Found ' . count($richTextRecords) . ' ' . $table . ' records that have a "<link>" tag in the field ' . $field);
-                $this->infoMessage($progress . ' Updating references for ' . $record['oldIdentifier']);
-                $this->updateRichTextFields($table, $field, $richTextRecords, $record);
-            }
-        }
-        $this->databaseConnection->sql_free_result($result);
-        $this->horizontalLine('info');
-        $this->message('Removed ' . $this->successString($total) . ' files from the _migrated folder.');
-        $this->message('Freed ' . $this->successString(GeneralUtility::formatSize($freedBytes)));
-    }
-
-    /**
      * Get database result pointer to sys_file records in the _migrated folder with sha1 matching documents outside of
      * the _migrated folder.
      *
-     * @return \mysqli_result
+     * @since 1.1.0
+     *
+     * @return array
      */
-    protected function getDocumentsWithMatchingSha1()
+    protected function getMigratableDocuments()
     {
         $result = $this->databaseConnection->sql_query('SELECT
             migrated.size,
-            migrated.uid AS oldUid,
-            alternate.uid AS newUid,
-            migrated.identifier AS oldIdentifier,
+            migrated.uid         AS oldUid,
+            alternate.uid        AS newUid,
+            migrated.identifier  AS oldIdentifier,
             alternate.identifier AS newIdentifier
         FROM sys_file AS migrated
             JOIN sys_file AS alternate
@@ -237,31 +327,80 @@ class UndoubleCommandController extends AbstractCommandController
             NOT migrated.uid = alternate.uid
             AND migrated.identifier LIKE "/_migrated/%"
             AND alternate.identifier NOT LIKE "/_migrated/%"
-        GROUP BY
-            migrated.uid
+        ORDER BY
+            oldUid ASC,
+            newUid DESC
         ;');
+        $rows = array();
         if ($result === null) {
             $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
+                $rows[] = $row;
+            }
         }
+        $this->databaseConnection->sql_free_result($result);
 
-        return $result;
+        return $rows;
     }
 
     /**
-     * Get database result pointer to sys_file records in the _migrated folder with sha1 matching documents outside of
-     * the _migrated folder but have no references in sys_file_reference.
+     * Get array of sys_file records in the _migrated folder with sha1 matching documents outside of
+     * the _migrated folder with references in the sys_file_reference table.
      *
-     * @return \mysqli_result
+     * @since 1.1.0
+     *
+     * @return array
      */
-    protected function getDocumentsWithMatchingSha1WithoutReferences()
+    protected function getMigratableDocumentsWithReferences()
     {
         $result = $this->databaseConnection->sql_query('SELECT
             migrated.size,
             migrated.uid         AS oldUid,
             alternate.uid        AS newUid,
             migrated.identifier  AS oldIdentifier,
-            alternate.identifier AS newIdentifier,
-            sys_file_reference.uid_local
+            alternate.identifier AS newIdentifier
+        FROM sys_file AS migrated
+            JOIN sys_file AS alternate
+                ON migrated.sha1 = alternate.sha1
+            JOIN sys_file_reference
+                ON sys_file_reference.uid_local = migrated.uid
+        WHERE
+            NOT migrated.uid = alternate.uid
+            AND migrated.identifier LIKE "/_migrated/%"
+            AND alternate.identifier NOT LIKE "/_migrated/%"
+        GROUP BY
+            migrated.uid
+        ;');
+        $rows = array();
+        if ($result === null) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
+                $rows[] = $row;
+            }
+        }
+        $this->databaseConnection->sql_free_result($result);
+
+        return $rows;
+    }
+
+    /**
+     * Get array of sys_file records in the _migrated folder with sha1 matching documents outside of
+     * the _migrated folder but without entries in the sys_file_reference table.
+     *
+     * @since 1.1.0
+     *
+     * @return array
+     */
+    protected function getMigratableDocumentsWithoutReferences()
+    {
+        $result = $this->databaseConnection->sql_query('SELECT
+            migrated.size,
+            migrated.uid         AS oldUid,
+            alternate.uid        AS newUid,
+            migrated.identifier  AS oldIdentifier,
+            alternate.identifier AS newIdentifier
         FROM sys_file AS migrated
             JOIN sys_file AS alternate
                 ON migrated.sha1 = alternate.sha1
@@ -271,37 +410,41 @@ class UndoubleCommandController extends AbstractCommandController
             NOT migrated.uid = alternate.uid
             AND migrated.identifier LIKE "/_migrated/%"
             AND alternate.identifier NOT LIKE "/_migrated/%"
-            AND sys_file_reference.uid_local IS NULL
+            AND sys_file_reference.uid_foreign IS NULL
         GROUP BY
-            migrated.uid;
-            ');
+            migrated.uid
+        ;');
+        $rows = array();
         if ($result === null) {
             $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
+                $rows[] = $row;
+            }
         }
+        $this->databaseConnection->sql_free_result($result);
 
-        return $result;
+        return $rows;
     }
 
     /**
-     * Get rich text fields with references
+     * Get typolink enabled fields with references
+     *
+     * @since 1.1.0
      *
      * @param string $table
      * @param string $field
-     * @param int $uid
      *
-     * @return mixed
+     * @return array
      */
-    private function getRichTextFieldsWithReferences($table, $field, $uid)
+    private function getTypoLinkFieldsWithReferences($table, $field)
     {
-        $uid = (int)$uid;
-        $result = false;
-
+        $result = array();
         $rows = $this->databaseConnection->exec_SELECTgetRows(
             'uid, ' . $field,
             $table,
-            'deleted=0 AND (' . $field . ' LIKE  "%<link file:' . $uid . '%" OR ' . $field . ' LIKE "%&lt;link file:' . $uid . '%")'
+            'deleted=0 AND ' . $field . ' LIKE  "file:%"'
         );
-        $this->warningMessage($this->databaseConnection->debug_lastBuiltQuery);
         if ($rows === null) {
             $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
         } else {
@@ -312,37 +455,23 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
-     * Get rich text fields with references
+     * Get typolink_tag enabled fields with references
+     *
+     * @since 1.1.0
      *
      * @param string $table
      * @param string $field
-     * @param int $uid
      *
-     * @return mixed
+     * @return array
      */
-    private function getRichTextFieldsWithReferencesPrepared($table, $field, $uid)
+    private function getTypoLinkTagFieldsWithReferences($table, $field)
     {
-        $rows = [];
-        $uid = (int)$uid;
-
-        $key = $table . '-' . $field;
-        if (!isset($this->richTextStatements[$key])) {
-            $this->richTextStatements[$table . '-' . $field] = $this->databaseConnection->prepare_SELECTquery(
-                'uid, ' . $field,
-                $table,
-                'deleted=0 AND (' . $field . ' LIKE :like1 OR ' . $field . ' LIKE :like2)'
-            );
-        }
-        $this->richTextStatements[$key]->execute(array(
-            ':like1' => '%<link file:' . $uid . '%',
-            ':like2' => '%&lt;link file:' . $uid . '%'
-        ));
-
-        $result = $this->richTextStatements[$key]->fetch();
-        while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
-            $rows[] = $row;
-        }
-        $this->databaseConnection->sql_free_result($result);
+        $result = array();
+        $rows = $this->databaseConnection->exec_SELECTgetRows(
+            'uid, ' . $field,
+            $table,
+            'deleted=0 AND (' . $field . ' LIKE  "%<link file:%" OR ' . $field . ' LIKE "%&lt;link file:%")'
+        );
         if ($rows === null) {
             $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
         } else {
@@ -353,76 +482,186 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
-     * Update rich text fields with new references
+     * Find fields in tables that have a softref configuration
      *
-     * @param string $table
-     * @param string $field
-     * @param array $richTextRecords
-     * @param array $migrationData
+     * @since 1.1.0
      *
-     * @return mixed
+     * These are the fields that can contain references to files
+     *
+     * @return void
      */
-    private function updateRichTextFields($table, $field, array $richTextRecords, array $migrationData)
+    private function findSoftRefFields()
     {
-        $table = $this->databaseConnection->escapeStrForLike($table, $table);
-        $field = $this->databaseConnection->escapeStrForLike($field, $table);
-        $result = [];
-
-        foreach ($richTextRecords as $rec) {
-            $originalContent = $rec[$field];
-            $finalContent = $originalContent;
-            $results = array();
-            preg_match_all(
-                '/(?:<link file ([0-9]+)([^>]*)?>(.*?)<\/link file>|&lt;link file ([0-9]+)(.*?)?&gt;(.*?)&lt;\/link file&gt;)/',
-                $originalContent,
-                $results,
-                PREG_SET_ORDER
-            );
-            if (count($results)) {
-                foreach ($results as $result) {
-                    $searchString = $result[0];
-                    $linkClass = '';
-                    $linkTarget = '';
-                    $linkText = '';
-                    $linkTitle = '';
-                    // Match for <link file
-                    if ((int)$result[1] > 0) {
-                        // see EXT:dam/link filetag/class.tx_dam_rtetransform_link filetag.php
-                        list($linkTarget, $linkClass, $linkTitle) = explode(' ', trim($result[2]), 3);
-                        $linkText = $result[3];
+        foreach ($GLOBALS['TCA'] as $table => $tableConfiguration) {
+            if (isset($tableConfiguration['columns'])) {
+                foreach ($tableConfiguration['columns'] as $field => $fieldConfiguration) {
+                    if (isset($fieldConfiguration['config'], $fieldConfiguration['config']['softref'])) {
+                        $types = explode(',', $fieldConfiguration['config']['softref']);
+                        foreach ($types as $type) {
+                            if ($type === 'typolink') {
+                                if (!isset($this->softRefFields['typolink'][$table])) {
+                                    $this->softRefFields['typolink'][$table] = [];
+                                }
+                                $this->softRefFields['typolink'][$table][] = $field;
+                            }
+                            if ($type === 'typolink_tag') {
+                                if (!isset($this->softRefFields['typolink_tag'][$table])) {
+                                    $this->softRefFields['typolink_tag'][$table] = [];
+                                }
+                                $this->softRefFields['typolink_tag'][$table][] = $field;
+                            }
+                        }
                     }
-                    // Match for &lt;link file
-                    $useEntities = ((int)$result[4] > 0);
-                    if ($useEntities) {
-                        // see EXT:dam/link filetag/class.tx_dam_rtetransform_link filetag.php
-                        list($linkTarget, $linkClass, $linkTitle) = explode(' ', trim($result[5]), 3);
-                        $linkText = $result[6];
-                    }
-                    $openingBracket = $useEntities ? '&lt;' : '<';
-                    $closingBracket = $useEntities ? '&gt;' : '>';
-                    $replaceString = $openingBracket . 'link file:' . $migrationData['oldUid'] . ' ' . $linkTarget . ' ' . $linkClass . ' ' . $linkTitle . ' ' . $closingBracket . $linkText . $openingBracket . '/link' . $closingBracket;
-                    $finalContent = str_replace($searchString, $replaceString, $finalContent);
-                }
-                // update the record
-                if ($finalContent !== $originalContent) {
-                    if (!$this->isDryRun) {
-                        $this->databaseConnection->exec_UPDATEquery(
-                            $table,
-                            'uid=' . $rec['uid'],
-                            array($field => $finalContent)
-                        );
-
-                    }
-                    $this->infoMessage('Updated ' . $table . ':' . $rec['uid'] . ' with: ' . $finalContent);
                 }
             }
         }
-
-        return $result;
     }
 
     /**
-     * Move file references from migrated file to other file, mark migrated file as deleted
+     * Update typolink enabled fields with new references
+     *
+     * @since 1.1.0
+     *
+     * @param string $table
+     * @param string $field
+     * @param array $richTextRecord
+     * @param array $uidMap
+     *
+     * @return mixed
+     */
+    private function updateTypoLinkFields($table, $field, array $richTextRecord, array $uidMap)
+    {
+        $updateCount = 0;
+
+        $originalContent = $richTextRecord[$field];
+        $finalContent = $originalContent;
+        $results = array();
+        preg_match_all(
+            '/(?:file:([0-9]+)([^$]*))/',
+            $originalContent,
+            $results,
+            PREG_SET_ORDER
+        );
+        if (count($results)) {
+            $matchingUids = [];
+            foreach ($results as $result) {
+                $searchString = $result[0];
+                // File uid
+                $matchingUid = (int)$result[1];
+                if ($matchingUid > 0) {
+                    $linkRemainder = $result[2];
+                    if (isset($uidMap[$matchingUid])) {
+                        $matchingUids[] = $matchingUid;
+                        $replaceString = 'file:' . $uidMap[$matchingUid] . $linkRemainder;
+                        $finalContent = str_replace($searchString, $replaceString, $finalContent);
+                        $updateCount++;
+                    }
+                }
+            }
+            // update the record
+            if ($finalContent !== $originalContent) {
+                if (!$this->isDryRun) {
+                    $this->databaseConnection->exec_UPDATEquery(
+                        $table,
+                        'uid=' . $richTextRecord['uid'],
+                        array($field => $finalContent)
+                    );
+                    foreach ($matchingUids as $matchingUid) {
+                        $result = $this->databaseConnection->exec_UPDATEquery(
+                            'sys_refindex',
+                            'ref_uid = ' . $matchingUid
+                            . ' AND ref_table = \'sys_file\''
+                            . ' AND NOT tablename = \'sys_file_metadata\''
+                            . ' AND NOT tablename = \'sys_file_reference\'',
+                            array('ref_uid' => $uidMap[$matchingUid])
+                        );
+                        if ($result === null) {
+                            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+                        }
+                    }
+                }
+                $this->infoMessage('Updated ' . $table . ':' . $richTextRecord['uid'] . ' with: ' . $finalContent);
+            }
+        }
+
+        return $updateCount;
+    }
+
+    /**
+     * Update typolink_tag enabled fields with new references
+     *
+     * @since 1.1.0
+     *
+     * @param string $table
+     * @param string $field
+     * @param array $richTextRecord
+     * @param array $uidMap
+     *
+     * @return mixed
+     */
+    private function updateTypoLinkTagFields($table, $field, array $richTextRecord, array $uidMap)
+    {
+        $updateCount = 0;
+
+        $originalContent = $richTextRecord[$field];
+        $finalContent = $originalContent;
+        $results = array();
+        preg_match_all(
+            '/(?:<link file:([0-9]+)([^>]*)?>(.*?)<\/link>)/',
+            $originalContent,
+            $results,
+            PREG_SET_ORDER
+        );
+        if (count($results)) {
+            $matchingUids = [];
+            foreach ($results as $result) {
+                $searchString = $result[0];
+                // File uid
+                $matchingUid = (int)$result[1];
+                if ($matchingUid > 0) {
+                    $linkRemainder = $result[2];
+                    $linkText = $result[3];
+                    if (isset($uidMap[$matchingUid])) {
+                        $matchingUids[] = $matchingUid;
+                        $replaceString = '<link file:' . $uidMap[$matchingUid] . $linkRemainder . '>' . $linkText . '</link>';
+                        $finalContent = str_replace($searchString, $replaceString, $finalContent);
+                        $updateCount++;
+                    }
+                }
+            }
+            // update the record
+            if ($finalContent !== $originalContent) {
+                if (!$this->isDryRun) {
+                    $this->databaseConnection->exec_UPDATEquery(
+                        $table,
+                        'uid=' . $richTextRecord['uid'],
+                        array($field => $finalContent)
+                    );
+                    foreach ($matchingUids as $matchingUid) {
+                        $result = $this->databaseConnection->exec_UPDATEquery(
+                            'sys_refindex',
+                            'ref_uid = ' . $matchingUid
+                            . ' AND ref_table = \'sys_file\''
+                            . ' AND NOT tablename = \'sys_file_metadata\''
+                            . ' AND NOT tablename = \'sys_file_reference\'',
+                            array('ref_uid' => $uidMap[$matchingUid])
+                        );
+                        if ($result === null) {
+                            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+                        }
+                    }
+                }
+                $this->infoMessage('Updated ' . $table . ':' . $richTextRecord['uid'] . ' with: ' . $finalContent);
+            }
+        }
+
+        return $updateCount;
+    }
+
+    /**
+     * Move file references from migrated file to other file
+     *
+     * @since 1.0.0
      *
      * @param array $identifiers
      *
