@@ -149,13 +149,13 @@ class UndoubleCommandController extends AbstractCommandController
 
         $this->message();
         $this->warningMessage('Calling updateTypolinkFields command');
-        $this->updateTypolinkFieldsCommand('', '', $dryRun);
+        $this->updateTypolinkFieldsCommand('', '', '', $dryRun);
         $this->message();
         $this->warningMessage('Calling updateTypolinkTagFields command');
-        $this->updateTypolinkTagFieldsCommand('', '', $dryRun);
+        $this->updateTypolinkTagFieldsCommand('', '', '', $dryRun);
         $this->message();
         $this->warningMessage('Calling migratedfiles command');
-        $this->migrateFileReferences($dryRun);
+        $this->migrateFileReferences('', $dryRun);
     }
 
     /**
@@ -175,13 +175,13 @@ class UndoubleCommandController extends AbstractCommandController
 
         $this->message();
         $this->warningMessage('Calling updateTypolinkFields command');
-        $this->updateTypolinkFieldsCommand('', '', $dryRun);
+        $this->updateTypolinkFieldsCommand('', '', 'regular', $dryRun);
         $this->message();
         $this->warningMessage('Calling updateTypolinkTagFields command');
-        $this->updateTypolinkTagFieldsCommand('', '', $dryRun);
+        $this->updateTypolinkTagFieldsCommand('', '', 'regular', $dryRun);
         $this->message();
         $this->warningMessage('Calling migratedfiles command');
-        $this->migrateFileReferences($dryRun);
+        $this->migrateFileReferences('regular', $dryRun);
     }
 
     /**
@@ -191,15 +191,20 @@ class UndoubleCommandController extends AbstractCommandController
      * TCA is inspected and all fields with a softref confiugration of type `typolink` will be processed. You can
      * also specify a table and field to process just that field.
      *
+     * The `$mode` parameter can be set to either `internal` or `regular`. If it is 'internal', the operation will be
+     * performed with files having duplicates 'inside' of the _migrated folder. If set to 'regular', the operation will
+     * be performed with files having duplicates 'outside' of the _migrated folder.
+     *
      * @since 1.1.0
      *
      * @param string $table The table to work on. Default: ``.
      * @param string $field The field to work on. Default: ``.
+     * @param string $mode The mode to work in. Either 'internal' or 'regular'. Default: `internal`.
      * @param bool $dryRun Do a test run, no modifications.
      *
      * @return void
      */
-    public function updateTypolinkFieldsCommand($table = '', $field = '', $dryRun = false)
+    public function updateTypolinkFieldsCommand($table = '', $field = '', $mode = 'internal', $dryRun = false)
     {
         $table = preg_replace('/[^a-zA-Z0-9_-]/', '', $table);
         $field = preg_replace('/[^a-zA-Z0-9_-]/', '', $field);
@@ -213,6 +218,11 @@ class UndoubleCommandController extends AbstractCommandController
         $updateCounter = 0;
 
         if (!count($this->uidMap)) {
+            if ($mode === 'internal') {
+                $this->populateSha1MapFromMigratedFolder();
+            } else {
+                $this->populateSha1Map();
+            }
             $this->populateUidMap();
         }
         $total = count($this->uidMap);
@@ -256,15 +266,20 @@ class UndoubleCommandController extends AbstractCommandController
      * TCA is inspected and all fields with a softref configuration of type `typolink_tag` will be processed. You can
      * also specify a table and field to process just that field.
      *
+     * The `$mode` parameter can be set to either `internal` or `regular`. If it is 'internal', the operation will be
+     * performed with files having duplicates 'inside' of the _migrated folder. If set to 'regular', the operation will
+     * be performed with files having duplicates 'outside' of the _migrated folder.
+     *
      * @since 1.1.0
      *
      * @param string $table The table to work on. Default: ``.
      * @param string $field The field to work on. Default: ``.
+     * @param string $mode The mode to work in. Either 'internal' or 'regular'. Default: `internal`.
      * @param bool $dryRun Do a test run, no modifications.
      *
      * @return void
      */
-    public function updateTypolinkTagFieldsCommand($table = '', $field = '', $dryRun = false)
+    public function updateTypolinkTagFieldsCommand($table = '', $field = '', $mode = 'internal', $dryRun = false)
     {
         $table = preg_replace('/[^a-zA-Z0-9_-]/', '', $table);
         $field = preg_replace('/[^a-zA-Z0-9_-]/', '', $field);
@@ -277,6 +292,11 @@ class UndoubleCommandController extends AbstractCommandController
         $this->isDryRun = $dryRun;
         $updateCounter = 0;
         if (!count($this->uidMap)) {
+            if ($mode === 'internal') {
+                $this->populateSha1MapFromMigratedFolder();
+            } else {
+                $this->populateSha1Map();
+            }
             $this->populateUidMap();
         }
         $total = count($this->uidMap);
@@ -319,23 +339,30 @@ class UndoubleCommandController extends AbstractCommandController
      * De-duplication of files in _migrated folder. Relations to files in migrated folder will be re-linked to an
      * identical file outside of the _migrated folder.
      *
+     * The `$mode` parameter can be set to either `internal` or `regular`. If it is 'internal', the operation will be
+     * performed with files having duplicates 'inside' of the _migrated folder. If set to 'regular', the operation will
+     * be performed with files having duplicates 'outside' of the _migrated folder.
+     *
      * @since 1.2.0
      *
+     * @param string $mode The mode to work in. Either 'internal' or 'regular'. Default: `internal`.
      * @param bool $dryRun Do a test run, no modifications.
      *
      * @return void
      */
-    public function migrateFileReferences($dryRun = false)
+    public function migrateFileReferences($mode = 'internal', $dryRun = false)
     {
         $this->headerMessage('Normalizing _migrated folder');
         $this->isDryRun = $dryRun;
         $counter = 0;
         try {
             if (!count($this->uidMap)) {
-                $result = $this->getMigratableDocumentsWithReferences();
-                foreach ($result as $row) {
-                    $this->uidMap[$row['oldUid']] = $row['newUid'];
+                if ($mode === 'internal') {
+                    $this->populateSha1MapFromMigratedFolder();
+                } else {
+                    $this->populateSha1Map();
                 }
+                $this->populateUidMap();
             }
             $total = count($this->uidMap);
             $this->infoMessage(
@@ -928,6 +955,12 @@ class UndoubleCommandController extends AbstractCommandController
 
     /**
      * Find fields in tables that have a softref configuration
+     *
+     * Go over all tables and fields in the TCA. For each field;
+     * - Check if it has a 'config' key in the field configuration
+     * - Check if the 'config' array has a 'softref' entry
+     * - Split the softref config
+     * - Check for 'typolink_tag' and 'typolink' strings
      *
      * @since 1.1.0
      *
