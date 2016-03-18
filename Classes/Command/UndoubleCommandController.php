@@ -78,7 +78,6 @@ class UndoubleCommandController extends AbstractCommandController
         $this->findSoftRefFields();
     }
 
-
     /**
      * Update typolink enabled fields
      *
@@ -106,7 +105,6 @@ class UndoubleCommandController extends AbstractCommandController
         }
 
         $this->isDryRun = $dryRun;
-        $counter = 0;
         $updateCounter = 0;
         $migratableFiles = $this->getMigratableDocuments();
         $uidMap = [];
@@ -128,14 +126,18 @@ class UndoubleCommandController extends AbstractCommandController
                 $totalTypoLink = count($typoLinkRows);
                 $this->message('Found ' . $this->successString($totalTypoLink) . ' ' . $table . ' records that have a "file:" reference in the field ' . $field);
                 if ($totalTypoLink) {
+                    $this->message('Going over all of these records to find links with migratable id\'s . . .');
+                    $updateFieldCounter = 0;
                     foreach ($typoLinkRows as $typoLinkRow) {
-                        $progress = number_format(100 * (++$counter / $totalTypoLink), 1) . '% of ' . $totalTypoLink;
                         $updateCount = $this->updateTypoLinkFields($table, $field, $typoLinkRow, $uidMap);
-                        if ($updateCount) {
-                            $this->infoMessage($progress . ' Updated ' . $updateCount . ' references in ' . $table . ':' . $field);
-                        }
-                        $updateCounter += $updateCount;
+                        $updateFieldCounter += $updateCount;
                     }
+                    if ($updateFieldCounter) {
+                        $this->message('Updated ' . $this->successString($updateFieldCounter) . ' references');
+                    } else {
+                        $this->message('Did ' . $this->successString('not') . ' find any updatable references');
+                    }
+                    $updateCounter += $updateFieldCounter;
                 }
             }
         }
@@ -169,7 +171,6 @@ class UndoubleCommandController extends AbstractCommandController
         }
 
         $this->isDryRun = $dryRun;
-        $counter = 0;
         $updateCounter = 0;
         $migratableFiles = $this->getMigratableDocuments();
         $uidMap = [];
@@ -191,14 +192,18 @@ class UndoubleCommandController extends AbstractCommandController
                 $totalTypoLink = count($typoLinkRows);
                 $this->message('Found ' . $this->successString($totalTypoLink) . ' ' . $table . ' records that have a "<link>" tag in the field ' . $field);
                 if ($totalTypoLink) {
+                    $this->message('Going over all of these records to find links with migratable id\'s . . .');
+                    $updateFieldCounter = 0;
                     foreach ($typoLinkRows as $typoLinkRow) {
-                        $progress = number_format(100 * (++$counter / $totalTypoLink), 1) . '% of ' . $totalTypoLink;
                         $updateCount = $this->updateTypoLinkTagFields($table, $field, $typoLinkRow, $uidMap);
-                        if ($updateCount) {
-                            $this->infoMessage($progress . ' Updated ' . $updateCount . ' references in ' . $table . ':' . $field);
-                        }
-                        $updateCounter += $updateCount;
+                        $updateFieldCounter += $updateCount;
                     }
+                    if ($updateFieldCounter) {
+                        $this->message('Updated ' . $this->successString($updateFieldCounter) . ' references');
+                    } else {
+                        $this->message('Did ' . $this->successString('not') . ' find any updatable references');
+                    }
+                    $updateCounter += $updateFieldCounter;
                 }
             }
         }
@@ -242,6 +247,7 @@ class UndoubleCommandController extends AbstractCommandController
             $this->errorMessage($exception->getMessage());
         }
     }
+
     /**
      * Remove files from _migrated folder
      *
@@ -443,7 +449,7 @@ class UndoubleCommandController extends AbstractCommandController
         $rows = $this->databaseConnection->exec_SELECTgetRows(
             'uid, ' . $field,
             $table,
-            'deleted=0 AND ' . $field . ' LIKE  "file:%"'
+            $field . ' LIKE  "file:%"'
         );
         if ($rows === null) {
             $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
@@ -470,7 +476,7 @@ class UndoubleCommandController extends AbstractCommandController
         $rows = $this->databaseConnection->exec_SELECTgetRows(
             'uid, ' . $field,
             $table,
-            'deleted=0 AND (' . $field . ' LIKE  "%<link file:%" OR ' . $field . ' LIKE "%&lt;link file:%")'
+            '(' . $field . ' LIKE  "%<link file:%" OR ' . $field . ' LIKE "%&lt;link file:%")'
         );
         if ($rows === null) {
             $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
@@ -524,29 +530,26 @@ class UndoubleCommandController extends AbstractCommandController
      *
      * @param string $table
      * @param string $field
-     * @param array $richTextRecord
+     * @param array $row
      * @param array $uidMap
      *
      * @return mixed
      */
-    private function updateTypoLinkFields($table, $field, array $richTextRecord, array $uidMap)
+    private function updateTypoLinkFields($table, $field, array $row, array $uidMap)
     {
         $updateCount = 0;
-
-        $originalContent = $richTextRecord[$field];
+        $originalContent = $row[$field];
         $finalContent = $originalContent;
         $results = array();
-        preg_match_all(
+        if (preg_match_all(
             '/(?:file:([0-9]+)([^$]*))/',
             $originalContent,
             $results,
             PREG_SET_ORDER
-        );
-        if (count($results)) {
+        )) {
             $matchingUids = [];
             foreach ($results as $result) {
                 $searchString = $result[0];
-                // File uid
                 $matchingUid = (int)$result[1];
                 if ($matchingUid > 0) {
                     $linkRemainder = $result[2];
@@ -558,12 +561,11 @@ class UndoubleCommandController extends AbstractCommandController
                     }
                 }
             }
-            // update the record
             if ($finalContent !== $originalContent) {
                 if (!$this->isDryRun) {
                     $this->databaseConnection->exec_UPDATEquery(
                         $table,
-                        'uid=' . $richTextRecord['uid'],
+                        'uid=' . $row['uid'],
                         array($field => $finalContent)
                     );
                     foreach ($matchingUids as $matchingUid) {
@@ -580,7 +582,7 @@ class UndoubleCommandController extends AbstractCommandController
                         }
                     }
                 }
-                $this->infoMessage('Updated ' . $table . ':' . $richTextRecord['uid'] . ' with: ' . $finalContent);
+                $this->message('Updated ' . $this->warningString($table . ':' . $row['uid']) . ' with: ' . $this->successString($finalContent));
             }
         }
 
@@ -594,29 +596,27 @@ class UndoubleCommandController extends AbstractCommandController
      *
      * @param string $table
      * @param string $field
-     * @param array $richTextRecord
+     * @param array $row
      * @param array $uidMap
      *
      * @return mixed
      */
-    private function updateTypoLinkTagFields($table, $field, array $richTextRecord, array $uidMap)
+    private function updateTypoLinkTagFields($table, $field, array $row, array $uidMap)
     {
         $updateCount = 0;
 
-        $originalContent = $richTextRecord[$field];
+        $originalContent = $row[$field];
         $finalContent = $originalContent;
         $results = array();
-        preg_match_all(
+        if (preg_match_all(
             '/(?:<link file:([0-9]+)([^>]*)?>(.*?)<\/link>)/',
             $originalContent,
             $results,
             PREG_SET_ORDER
-        );
-        if (count($results)) {
+        )) {
             $matchingUids = [];
             foreach ($results as $result) {
                 $searchString = $result[0];
-                // File uid
                 $matchingUid = (int)$result[1];
                 if ($matchingUid > 0) {
                     $linkRemainder = $result[2];
@@ -629,12 +629,12 @@ class UndoubleCommandController extends AbstractCommandController
                     }
                 }
             }
-            // update the record
+
             if ($finalContent !== $originalContent) {
                 if (!$this->isDryRun) {
                     $this->databaseConnection->exec_UPDATEquery(
                         $table,
-                        'uid=' . $richTextRecord['uid'],
+                        'uid=' . $row['uid'],
                         array($field => $finalContent)
                     );
                     foreach ($matchingUids as $matchingUid) {
@@ -651,7 +651,7 @@ class UndoubleCommandController extends AbstractCommandController
                         }
                     }
                 }
-                $this->infoMessage('Updated ' . $table . ':' . $richTextRecord['uid'] . ' with: ' . $finalContent);
+                $this->message('Updated ' . $this->warningString($table . ':' . $row['uid']) . ' with: ' . $this->successString($finalContent));
             }
         }
 
