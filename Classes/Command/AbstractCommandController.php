@@ -348,19 +348,29 @@ class AbstractCommandController extends CommandController
      * @since 1.0.0
      *
      * @param string $style
+     * @param integer $length
      * @param boolean $flushOutput
      *
      * @return void
      */
-    public function horizontalLine($style = '', $flushOutput = true)
+    public function horizontalLine($style = '', $length = -1, $flushOutput = true)
     {
         if (UNICODE) {
-            $linePaddingLength = mb_strlen('─') * (TERMINAL_WIDTH);
+            if ($length !== -1) {
+                $linePaddingLength = mb_strlen('─') * $length;
+            } else {
+                $linePaddingLength = mb_strlen('─') * (TERMINAL_WIDTH);
+            }
             $message =
                 str_pad('', $linePaddingLength, '─');
         } else {
-            $message =
-                str_pad('', TERMINAL_WIDTH, '-');
+            if ($length !== -1) {
+                $message =
+                    str_pad('', TERMINAL_WIDTH, '-');
+            } else {
+                $message =
+                    str_pad('', $length, '-');
+            }
         }
         switch ($style) {
             case 'error':

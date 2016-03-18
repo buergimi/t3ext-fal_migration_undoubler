@@ -114,7 +114,7 @@ class UndoubleCommandController extends AbstractCommandController
         $this->message('Total : ' . $this->successString($totalFileCount));
         $uniqueFileCount = $this->getUniqueFileCount();
         $this->message('Unique: ' . $this->successString($uniqueFileCount));
-        $this->horizontalLine();
+        $this->horizontalLine('', 22);
         $this->message('Remove: ' . $this->successString($totalFileCount - $uniqueFileCount) . ' (' . $this->errorString(GeneralUtility::formatSize($this->getPossibleSpaceSaved())) . ')');
         $this->message();
         $this->warningMessage('Files in the _migrated folder');
@@ -122,7 +122,7 @@ class UndoubleCommandController extends AbstractCommandController
         $this->message('Total : ' . $this->successString($migratedFileCount));
         $migratedUniqueFileCount = $this->getUniqueFileCountInMigratedFolder();
         $this->message('Unique: ' . $this->successString($migratedUniqueFileCount));
-        $this->horizontalLine();
+        $this->horizontalLine('', 22);
         $this->message('Remove  ' . $this->successString($migratedFileCount - $migratedUniqueFileCount) . ' (' . $this->errorString(GeneralUtility::formatSize($this->getPossibleSpaceSavedInMigratedFolder())) . ')');
         $this->message();
         $this->warningMessage('Top 20 files with most duplicates');
@@ -1060,8 +1060,8 @@ class UndoubleCommandController extends AbstractCommandController
     protected function countReferencesToFile($oldUid)
     {
         $result = $this->databaseConnection->exec_SELECTcountRows(
-            'sys_file_reference',
-            'uid_local = ' . (int)$oldUid
+            'uid_local = ' . (int)$oldUid,
+            'sys_file_reference'
         );
         if (!$result) {
             $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
