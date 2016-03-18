@@ -78,6 +78,27 @@ class UndoubleCommandController extends AbstractCommandController
         $this->findSoftRefFields();
     }
 
+
+    /**
+     * Show status information
+     *
+     * @since 1.2.0
+     *
+     * @return void
+     */
+    public function statusCommand()
+    {
+        $totalFileCount = $this->getFileCount();
+        $uniqueFileCount = $this->getUniqueFileCount();
+        $this->headerMessage('Status');
+        $this->message('Total files in sys_file : ' . $this->successString($totalFileCount));
+        $this->message('Unique files in sys_file: ' . $this->successString($uniqueFileCount));
+        $this->horizontalLine();
+        $this->message('We can remove           : ' . $this->successString($totalFileCount - $uniqueFileCount));
+        $this->message();
+        $this->message('Potential space saved   : ' . $this->successString(GeneralUtility::formatSize($this->getPossibleSpaceSaved())));
+    }
+
     /**
      * Update typolink enabled fields
      *
@@ -95,7 +116,6 @@ class UndoubleCommandController extends AbstractCommandController
      */
     public function updateTypolinkFieldsCommand($table = '', $field = '', $dryRun = false)
     {
-
         $table = preg_replace('/[^a-zA-Z0-9_-]/', '', $table);
         $field = preg_replace('/[^a-zA-Z0-9_-]/', '', $field);
         if ($table !== '' && $field !== '') {
@@ -141,7 +161,7 @@ class UndoubleCommandController extends AbstractCommandController
                 }
             }
         }
-        $this->horizontalLine('info');
+        $this->message();
         $this->message('Updated ' . $this->successString($updateCounter) . ' references.');
     }
 
@@ -207,7 +227,7 @@ class UndoubleCommandController extends AbstractCommandController
                 }
             }
         }
-        $this->horizontalLine('info');
+        $this->message();
         $this->message('Updated ' . $this->successString($updateCounter) . ' references.');
     }
 
@@ -241,7 +261,7 @@ class UndoubleCommandController extends AbstractCommandController
                     $this->updateReferencesToFile($row);
                 }
             }
-            $this->horizontalLine('info');
+            $this->message();
             $this->message('Updated ' . $this->successString($total) . ' references to files from the _migrated folder.');
         } catch (\RuntimeException $exception) {
             $this->errorMessage($exception->getMessage());
@@ -302,7 +322,7 @@ class UndoubleCommandController extends AbstractCommandController
                     }
                 }
             }
-            $this->horizontalLine('info');
+            $this->message();
             $this->message('Removed ' . $this->successString($total) . ' files from the _migrated folder.');
             $this->message('Freed ' . $this->successString(GeneralUtility::formatSize($freedBytes)));
         } catch (\RuntimeException $exception) {
@@ -311,7 +331,7 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
-     * Get database result pointer to sys_file records in the _migrated folder with sha1 matching documents outside of
+     * Get array of sys_file records in the _migrated folder with sha1 matching documents outside of
      * the _migrated folder.
      *
      * @since 1.1.0
@@ -348,6 +368,155 @@ class UndoubleCommandController extends AbstractCommandController
         $this->databaseConnection->sql_free_result($result);
 
         return $rows;
+    }
+
+    /**
+     * Get array of sys_file records in the _migrated folder with sha1 matching documents in the _migrated folder.
+     *
+     * @since 1.2.0
+     *
+     * @return array
+     */
+    protected function getMigratableDocumentsInMigratedFolder()
+    {
+        $result = $this->databaseConnection->sql_query('SELECT
+              migrated.sha1,
+              migrated.uid         AS oldUid,
+              alternate.uid        AS newUid,
+              migrated.identifier  AS oldIdentifier,
+              alternate.identifier AS newIdentifier
+            FROM sys_file AS migrated
+              JOIN sys_file AS alternate
+                ON migrated.sha1 = alternate.sha1
+            WHERE
+              NOT migrated.uid = alternate.uid
+              AND migrated.identifier LIKE "/_migrated/%"
+              AND alternate.identifier LIKE "/_migrated/%"
+            ORDER BY
+              oldUid DESC,
+              newUid ASC
+        ;');
+        $rows = array();
+        if ($result === null) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
+                $rows[] = $row;
+            }
+        }
+        $this->databaseConnection->sql_free_result($result);
+
+        return $rows;
+    }
+
+    /**
+     * Get array of sys_file records in the _migrated grouped by sha1.
+     *
+     * @since 1.2.0
+     *
+     * @return array
+     */
+    protected function getMasterSha1ListForMigratedFolder()
+    {
+        $result = $this->databaseConnection->sql_query('SELECT
+              uid,
+              sha1
+            FROM sys_file
+            WHERE identifier LIKE "/_migrated/%"
+            GROUP BY sha1
+            ORDER BY uid
+        ;');
+        $rows = array();
+        if ($result === null) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
+                $rows[] = $row;
+            }
+        }
+        $this->databaseConnection->sql_free_result($result);
+
+        return $rows;
+    }
+
+    /**
+     * Get number of files in sys_file
+     *
+     * @since 1.2.0
+     *
+     * @return integer
+     */
+    protected function getFileCount()
+    {
+        $result = $this->databaseConnection->sql_query('SELECT
+              COUNT(*) AS total
+            FROM sys_file
+        ;');
+        $count = 0;
+        if ($result === null) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            $row = $this->databaseConnection->sql_fetch_assoc($result);
+            $count = $row['total'];
+        }
+        $this->databaseConnection->sql_free_result($result);
+
+        return $count;
+    }
+
+    /**
+     * Get number bytes that can possibly be saved by undoubling
+     *
+     * @since 1.2.0
+     *
+     * @return integer
+     */
+    protected function getPossibleSpaceSaved()
+    {
+        $result = $this->databaseConnection->sql_query('SELECT
+              size,
+              COUNT(uid) AS total
+            FROM sys_file
+            GROUP BY sha1;
+        ;');
+        $count = 0;
+        if ($result === null) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
+                if ($row['total'] > 1) {
+                    $count += $row['size'] * ($row['total'] - 1);
+                }
+            }
+        }
+        $this->databaseConnection->sql_free_result($result);
+
+        return $count;
+    }
+
+    /**
+     * Get number of unique sha1 values in sys_file
+     *
+     * @since 1.2.0
+     *
+     * @return integer
+     */
+    protected function getUniqueFileCount()
+    {
+        $result = $this->databaseConnection->sql_query('SELECT
+              uid
+            FROM sys_file
+            GROUP BY sha1
+        ;');
+        $count = 0;
+        if ($result === null) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            $count = $this->databaseConnection->sql_num_rows($result);
+        }
+        $this->databaseConnection->sql_free_result($result);
+
+        return $count;
     }
 
     /**
