@@ -88,15 +88,28 @@ class UndoubleCommandController extends AbstractCommandController
      */
     public function statusCommand()
     {
-        $totalFileCount = $this->getFileCount();
-        $uniqueFileCount = $this->getUniqueFileCount();
         $this->headerMessage('Status');
-        $this->message('Total files in sys_file : ' . $this->successString($totalFileCount));
-        $this->message('Unique files in sys_file: ' . $this->successString($uniqueFileCount));
+        $this->warningMessage('All files');
+        $totalFileCount = $this->getFileCount();
+        $this->message('Total : ' . $this->successString($totalFileCount));
+        $uniqueFileCount = $this->getUniqueFileCount();
+        $this->message('Unique: ' . $this->successString($uniqueFileCount));
         $this->horizontalLine();
-        $this->message('We can remove           : ' . $this->successString($totalFileCount - $uniqueFileCount));
+        $this->message('Remove: ' . $this->successString($totalFileCount - $uniqueFileCount) . ' (' . $this->errorString(GeneralUtility::formatSize($this->getPossibleSpaceSaved())) . ')');
         $this->message();
-        $this->message('Potential space saved   : ' . $this->successString(GeneralUtility::formatSize($this->getPossibleSpaceSaved())));
+        $this->warningMessage('Files in the _migrated folder');
+        $migratedFileCount = $this->getFileCountInMigratedFolder();
+        $this->message('Total : ' . $this->successString($migratedFileCount));
+        $migratedUniqueFileCount = $this->getUniqueFileCountInMigratedFolder();
+        $this->message('Unique: ' . $this->successString($migratedUniqueFileCount));
+        $this->horizontalLine();
+        $this->message('Remove  ' . $this->successString($migratedFileCount - $migratedUniqueFileCount) . ' (' . $this->errorString(GeneralUtility::formatSize($this->getPossibleSpaceSavedInMigratedFolder())) . ')');
+        $this->message();
+        $this->warningMessage('Top 20 files with most duplicates');
+        $mostDuplicates = $this->getFilesWithMostDuplicates();
+        foreach ($mostDuplicates as $row) {
+            $this->message($this->successString($row['total']) . ' ' . $row['identifier']);
+        }
     }
 
     /**
@@ -465,6 +478,32 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
+     * Get number of files in sys_file that are in the _migrated folder
+     *
+     * @since 1.2.0
+     *
+     * @return integer
+     */
+    protected function getFileCountInMigratedFolder()
+    {
+        $result = $this->databaseConnection->sql_query('SELECT
+              COUNT(*) AS total
+            FROM sys_file
+            WHERE identifier LIKE "/_migrated/%"
+        ;');
+        $count = 0;
+        if ($result === null) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            $row = $this->databaseConnection->sql_fetch_assoc($result);
+            $count = $row['total'];
+        }
+        $this->databaseConnection->sql_free_result($result);
+
+        return $count;
+    }
+
+    /**
      * Get number bytes that can possibly be saved by undoubling
      *
      * @since 1.2.0
@@ -495,6 +534,67 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
+     * Get number bytes that can possibly be saved by undoubling inside of the _migratedfolder
+     *
+     * @since 1.2.0
+     *
+     * @return integer
+     */
+    protected function getPossibleSpaceSavedInMigratedFolder()
+    {
+        $result = $this->databaseConnection->sql_query('SELECT
+              size,
+              COUNT(uid) AS total
+            FROM sys_file
+            WHERE identifier LIKE "/_migrated/%"
+            GROUP BY sha1;
+        ;');
+        $count = 0;
+        if ($result === null) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
+                if ($row['total'] > 1) {
+                    $count += $row['size'] * ($row['total'] - 1);
+                }
+            }
+        }
+        $this->databaseConnection->sql_free_result($result);
+
+        return $count;
+    }
+
+    /**
+     * Get Files with the most duplicates
+     *
+     * @since 1.2.0
+     *
+     * @return array
+     */
+    protected function getFilesWithMostDuplicates()
+    {
+        $result = $this->databaseConnection->sql_query('SELECT
+              identifier,
+              COUNT(uid) AS total
+            FROM sys_file
+            GROUP BY sha1
+            ORDER BY total DESC
+            LIMIT 20;
+        ;');
+        $return = [];
+        if ($result === null) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
+                $return[] = $row;
+            }
+        }
+        $this->databaseConnection->sql_free_result($result);
+
+        return $return;
+    }
+
+    /**
      * Get number of unique sha1 values in sys_file
      *
      * @since 1.2.0
@@ -506,6 +606,32 @@ class UndoubleCommandController extends AbstractCommandController
         $result = $this->databaseConnection->sql_query('SELECT
               uid
             FROM sys_file
+            GROUP BY sha1
+        ;');
+        $count = 0;
+        if ($result === null) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            $count = $this->databaseConnection->sql_num_rows($result);
+        }
+        $this->databaseConnection->sql_free_result($result);
+
+        return $count;
+    }
+
+    /**
+     * Get number of unique sha1 values in sys_file
+     *
+     * @since 1.2.0
+     *
+     * @return integer
+     */
+    protected function getUniqueFileCountInMigratedFolder()
+    {
+        $result = $this->databaseConnection->sql_query('SELECT
+              uid
+            FROM sys_file
+            WHERE identifier LIKE "/_migrated/%"
             GROUP BY sha1
         ;');
         $count = 0;
