@@ -159,6 +159,8 @@ class UndoubleCommandController extends AbstractCommandController
         $this->message();
         $this->warningMessage('Calling updateTypolinkTagFields command');
         $this->updateTypolinkTagFieldsCommand('', '', $dryRun);
+        $this->warningMessage('Calling migratedfiles command');
+        $this->migratedFilesCommand($dryRun);
     }
 
     /**
@@ -314,20 +316,28 @@ class UndoubleCommandController extends AbstractCommandController
         $this->isDryRun = $dryRun;
         $counter = 0;
         try {
-            $result = $this->getMigratableDocumentsWithReferences();
-            $total = count($result);
+            if (!count($this->uidMap)) {
+                $result = $this->getMigratableDocumentsWithReferences();
+                foreach ($result as $row) {
+                    $this->uidMap[$row['oldUid']] = $row['newUid'];
+                }
+            }
+            $total = count($this->uidMap);
             $this->infoMessage(
                 'Found ' . $total . ' records in _migrated folder with references that have counterparts outside of there'
             );
-            foreach ($result as $row) {
+            $updateCount = 0;
+            foreach ($this->uidMap as $oldUid => $newUid) {
                 $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
-                $this->infoMessage($progress . ' Updating references for ' . $row['oldIdentifier']);
+                $this->infoMessage($progress . ' Updating references for ' . $oldUid);
                 if (!$this->isDryRun) {
-                    $this->updateReferencesToFile($row);
+                    $updateCount += $this->updateReferencesToFile($oldUid, $newUid);
+                } else {
+                    $updateCount += $this->countReferencesToFile($oldUid);
                 }
             }
             $this->message();
-            $this->message('Updated ' . $this->successString($total) . ' references to files from the _migrated folder.');
+            $this->message('Updated ' . $updateCount . ' references to files from the _migrated folder.');
         } catch (\RuntimeException $exception) {
             $this->errorMessage($exception->getMessage());
         }
@@ -1039,24 +1049,49 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
+     * Count file references to a certain file
+     *
+     * @since 1.2.0
+     *
+     * @param integer $oldUid
+     *
+     * @return int
+     */
+    protected function countReferencesToFile($oldUid)
+    {
+        $result = $this->databaseConnection->exec_SELECTcountRows(
+            'sys_file_reference',
+            'uid_local = ' . (int)$oldUid
+        );
+        if (!$result) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        }
+        return $result;
+    }
+
+    /**
      * Move file references from migrated file to other file
      *
      * @since 1.0.0
      *
-     * @param array $identifiers
+     * @param integer $oldUid
+     * @param integer $newUid
      *
-     * @return void
+     * @return int
      */
-    protected function updateReferencesToFile($identifiers)
+    protected function updateReferencesToFile($oldUid, $newUid)
     {
         $result = $this->databaseConnection->exec_UPDATEquery(
             'sys_file_reference',
-            'uid_local = ' . (int)$identifiers['oldUid'],
-            array('uid_local' => (int)$identifiers['newUid'])
+            'uid_local = ' . (int)$oldUid,
+            array('uid_local' => (int)$newUid)
         );
         if ($result === null) {
             $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
         }
+        $resultCount = $this->databaseConnection->sql_num_rows($result);
+        $this->databaseConnection->sql_free_result($result);
+        return $resultCount;
     }
 
     /**
