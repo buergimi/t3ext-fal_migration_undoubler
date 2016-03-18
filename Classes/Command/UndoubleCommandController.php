@@ -143,14 +143,8 @@ class UndoubleCommandController extends AbstractCommandController
      */
     public function migratedInternalCommand($dryRun = false)
     {
-        $this->populateSha1Map();
-        $documents = $this->getDocumentsInMigratedFolder();
-        foreach ($documents as $document) {
-            $document['uid'] = (int)$document['uid'];
-            if ($document['uid'] !== $this->sha1Map[$document['sha1']]) {
-                $this->uidMap[$document['uid']] = (int)$this->sha1Map[$document['sha1']];
-            }
-        }
+        $this->populateSha1MapFromMigratedFolder();
+        $this->populateUidMap();
         $this->message('Found ' . $this->successString(count($this->uidMap)) . ' files to undouble');
 
         $this->message();
@@ -161,7 +155,33 @@ class UndoubleCommandController extends AbstractCommandController
         $this->updateTypolinkTagFieldsCommand('', '', $dryRun);
         $this->message();
         $this->warningMessage('Calling migratedfiles command');
-        $this->migratedFilesCommand($dryRun);
+        $this->migrateFileReferences($dryRun);
+    }
+
+    /**
+     * Undouble files with duplicates outside of the _migrated folder
+     *
+     * @since 1.2.0
+     *
+     * @param bool $dryRun Do a test run, no modifications.
+     *
+     * @return void
+     */
+    public function migratedCommand($dryRun = false)
+    {
+        $this->populateSha1Map();
+        $this->populateUidMap();
+        $this->message('Found ' . $this->successString(count($this->uidMap)) . ' files to undouble');
+
+        $this->message();
+        $this->warningMessage('Calling updateTypolinkFields command');
+        $this->updateTypolinkFieldsCommand('', '', $dryRun);
+        $this->message();
+        $this->warningMessage('Calling updateTypolinkTagFields command');
+        $this->updateTypolinkTagFieldsCommand('', '', $dryRun);
+        $this->message();
+        $this->warningMessage('Calling migratedfiles command');
+        $this->migrateFileReferences($dryRun);
     }
 
     /**
@@ -193,10 +213,7 @@ class UndoubleCommandController extends AbstractCommandController
         $updateCounter = 0;
 
         if (!count($this->uidMap)) {
-            $migratableFiles = $this->getMigratableDocuments();
-            foreach ($migratableFiles as $migratableFile) {
-                $this->uidMap[(int)$migratableFile['oldUid']] = (int)$migratableFile['newUid'];
-            }
+            $this->populateUidMap();
         }
         $total = count($this->uidMap);
         $this->infoMessage(
@@ -260,10 +277,7 @@ class UndoubleCommandController extends AbstractCommandController
         $this->isDryRun = $dryRun;
         $updateCounter = 0;
         if (!count($this->uidMap)) {
-            $migratableFiles = $this->getMigratableDocuments();
-            foreach ($migratableFiles as $migratableFile) {
-                $this->uidMap[(int)$migratableFile['oldUid']] = (int)$migratableFile['newUid'];
-            }
+            $this->populateUidMap();
         }
         $total = count($this->uidMap);
         $this->infoMessage(
@@ -300,18 +314,18 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
-     * Normalize _migrated folder
+     * Migrate references to files in _migrated folder
      *
      * De-duplication of files in _migrated folder. Relations to files in migrated folder will be re-linked to an
      * identical file outside of the _migrated folder.
      *
-     * @since 1.0.0
+     * @since 1.2.0
      *
      * @param bool $dryRun Do a test run, no modifications.
      *
      * @return void
      */
-    public function migratedFilesCommand($dryRun = false)
+    public function migrateFileReferences($dryRun = false)
     {
         $this->headerMessage('Normalizing _migrated folder');
         $this->isDryRun = $dryRun;
@@ -330,15 +344,18 @@ class UndoubleCommandController extends AbstractCommandController
             $updateCount = 0;
             foreach ($this->uidMap as $oldUid => $newUid) {
                 $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
-                $this->infoMessage($progress . ' Updating references for ' . $oldUid);
                 if (!$this->isDryRun) {
-                    $updateCount += $this->updateReferencesToFile($oldUid, $newUid);
+                    $updates = $this->updateReferencesToFile($oldUid, $newUid);
                 } else {
-                    $updateCount += $this->countReferencesToFile($oldUid);
+                    $updates = $this->countReferencesToFile($oldUid);
+                }
+                $updateCount += $updates;
+                if ($updates) {
+                    $this->message($progress . ' Updated ' . $this->successString($updates) . ' references for ' . $oldUid);
                 }
             }
             $this->message();
-            $this->message('Updated ' . $updateCount . ' references to files from the _migrated folder.');
+            $this->message('Updated ' . $this->successString($updateCount) . ' references to files from the _migrated folder.');
         } catch (\RuntimeException $exception) {
             $this->errorMessage($exception->getMessage());
         }
@@ -507,6 +524,35 @@ class UndoubleCommandController extends AbstractCommandController
               total DESC,
               oldUid DESC,
               newUid ASC
+        ;');
+        $rows = array();
+        if ($result === null) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
+                $rows[] = $row;
+            }
+        }
+        $this->databaseConnection->sql_free_result($result);
+
+        return $rows;
+    }
+
+    /**
+     * Get array of sys_file records outside of the _migrated folder
+     *
+     * @since 1.2.0
+     *
+     * @return array
+     */
+    protected function getSha1ListForFilesOutsideMigratedFolder()
+    {
+        $result = $this->databaseConnection->sql_query('SELECT
+              uid,
+              sha1
+            FROM sys_file
+            WHERE identifier NOT LIKE "/_migrated/%"
+            ORDER BY uid
         ;');
         $rows = array();
         if ($result === null) {
@@ -1106,6 +1152,46 @@ class UndoubleCommandController extends AbstractCommandController
      * @return void
      */
     protected function populateSha1Map()
+    {
+        $sha1List = $this->getSha1ListForFilesOutsideMigratedFolder();
+        foreach ($sha1List as $row) {
+            if (!isset($this->sha1Map[$row['sha1']])
+                ||(isset($this->sha1Map[$row['sha1']]) && $this->sha1Map[$row['sha1']] > $row['uid'])) {
+                $this->sha1Map[$row['sha1']] = (int)$row['uid'];
+            }
+        }
+    }
+
+    /**
+     * Populate mapping of old-uid => new-uid indexed with old-uid
+     *
+     * These are most likely to be the original files
+     *
+     * @since 1.2.0
+     *
+     * @return void
+     */
+    protected function populateUidMap()
+    {
+        $documents = $this->getDocumentsInMigratedFolder();
+        foreach ($documents as $document) {
+            $document['uid'] = (int)$document['uid'];
+            if ($document['uid'] !== $this->sha1Map[$document['sha1']]) {
+                $this->uidMap[$document['uid']] = (int)$this->sha1Map[$document['sha1']];
+            }
+        }
+    }
+
+    /**
+     * Populate mapping of sha1 indexed array of lowest uid values
+     *
+     * These are most likely to be the original files
+     *
+     * @since 1.2.0
+     *
+     * @return void
+     */
+    protected function populateSha1MapFromMigratedFolder()
     {
         $sha1List = $this->getSha1ListForMigratedFolder();
         foreach ($sha1List as $row) {
