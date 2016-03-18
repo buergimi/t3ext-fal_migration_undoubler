@@ -159,6 +159,7 @@ class UndoubleCommandController extends AbstractCommandController
         $this->message();
         $this->warningMessage('Calling updateTypolinkTagFields command');
         $this->updateTypolinkTagFieldsCommand('', '', $dryRun);
+        $this->message();
         $this->warningMessage('Calling migratedfiles command');
         $this->migratedFilesCommand($dryRun);
     }
@@ -1060,10 +1061,11 @@ class UndoubleCommandController extends AbstractCommandController
     protected function countReferencesToFile($oldUid)
     {
         $result = $this->databaseConnection->exec_SELECTcountRows(
-            'uid_local = ' . (int)$oldUid,
-            'sys_file_reference'
+            'uid',
+            'sys_file_reference',
+            'uid_local = ' . (int)$oldUid
         );
-        if (!$result) {
+        if ($result === false) {
             $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
         }
         return $result;
