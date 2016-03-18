@@ -46,6 +46,26 @@ class UndoubleCommandController extends AbstractCommandController
     protected $isDryRun = false;
 
     /**
+     * File id map
+     *
+     * Index is the original uid, value is the 'new' uid
+     *
+     * @since 1.2.0
+     *
+     * @var array
+     */
+    protected $uidMap = [];
+
+    /**
+     * Unique Sha1 to id mapping
+     *
+     * @since 1.2.0
+     *
+     * @var array
+     */
+    protected $sha1Map = [];
+
+    /**
      * Fields with a softref configuration in the TCA
      *
      * @since 1.1.0
@@ -113,6 +133,35 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
+     * Undouble files with duplicates inside of the _migrated folder
+     *
+     * @since 1.2.0
+     *
+     * @param bool $dryRun Do a test run, no modifications.
+     *
+     * @return void
+     */
+    public function migratedInternalCommand($dryRun = false)
+    {
+        $this->populateSha1Map();
+        $documents = $this->getDocumentsInMigratedFolder();
+        foreach ($documents as $document) {
+            $document['uid'] = (int)$document['uid'];
+            if ($document['uid'] !== $this->sha1Map[$document['sha1']]) {
+                $this->uidMap[$document['uid']] = (int)$this->sha1Map[$document['sha1']];
+            }
+        }
+        $this->message('Found ' . $this->successString(count($this->uidMap)) . ' files to undouble');
+
+        $this->message();
+        $this->warningMessage('Calling updateTypolinkFields command');
+        $this->updateTypolinkFieldsCommand('', '', $dryRun);
+        $this->message();
+        $this->warningMessage('Calling updateTypolinkTagFields command');
+        $this->updateTypolinkTagFieldsCommand('', '', $dryRun);
+    }
+
+    /**
      * Update typolink enabled fields
      *
      * Finds rich text fields with file references. If these links point to migratable files, they will be updated. The
@@ -139,12 +188,14 @@ class UndoubleCommandController extends AbstractCommandController
 
         $this->isDryRun = $dryRun;
         $updateCounter = 0;
-        $migratableFiles = $this->getMigratableDocuments();
-        $uidMap = [];
-        foreach ($migratableFiles as $migratableFile) {
-            $uidMap[(int)$migratableFile['oldUid']] = (int)$migratableFile['newUid'];
+
+        if (!count($this->uidMap)) {
+            $migratableFiles = $this->getMigratableDocuments();
+            foreach ($migratableFiles as $migratableFile) {
+                $this->uidMap[(int)$migratableFile['oldUid']] = (int)$migratableFile['newUid'];
+            }
         }
-        $total = count($migratableFiles);
+        $total = count($this->uidMap);
         $this->infoMessage(
             'Found ' . $total . ' migratable records'
         );
@@ -162,7 +213,7 @@ class UndoubleCommandController extends AbstractCommandController
                     $this->message('Going over all of these records to find links with migratable id\'s . . .');
                     $updateFieldCounter = 0;
                     foreach ($typoLinkRows as $typoLinkRow) {
-                        $updateCount = $this->updateTypoLinkFields($table, $field, $typoLinkRow, $uidMap);
+                        $updateCount = $this->updateTypoLinkFields($table, $field, $typoLinkRow);
                         $updateFieldCounter += $updateCount;
                     }
                     if ($updateFieldCounter) {
@@ -205,12 +256,13 @@ class UndoubleCommandController extends AbstractCommandController
 
         $this->isDryRun = $dryRun;
         $updateCounter = 0;
-        $migratableFiles = $this->getMigratableDocuments();
-        $uidMap = [];
-        foreach ($migratableFiles as $migratableFile) {
-            $uidMap[(int)$migratableFile['oldUid']] = (int)$migratableFile['newUid'];
+        if (!count($this->uidMap)) {
+            $migratableFiles = $this->getMigratableDocuments();
+            foreach ($migratableFiles as $migratableFile) {
+                $this->uidMap[(int)$migratableFile['oldUid']] = (int)$migratableFile['newUid'];
+            }
         }
-        $total = count($migratableFiles);
+        $total = count($this->uidMap);
         $this->infoMessage(
             'Found ' . $total . ' migratable records'
         );
@@ -228,7 +280,7 @@ class UndoubleCommandController extends AbstractCommandController
                     $this->message('Going over all of these records to find links with migratable id\'s . . .');
                     $updateFieldCounter = 0;
                     foreach ($typoLinkRows as $typoLinkRow) {
-                        $updateCount = $this->updateTypoLinkTagFields($table, $field, $typoLinkRow, $uidMap);
+                        $updateCount = $this->updateTypoLinkTagFields($table, $field, $typoLinkRow);
                         $updateFieldCounter += $updateCount;
                     }
                     if ($updateFieldCounter) {
@@ -344,6 +396,38 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
+     * Get array of sys_file records in the _migrated folder.
+     *
+     * @since 1.2.0
+     *
+     * @return array
+     */
+    protected function getDocumentsInMigratedFolder()
+    {
+        $result = $this->databaseConnection->sql_query('SELECT
+              uid,
+              sha1,
+              size
+            FROM sys_file
+            WHERE
+              identifier LIKE "/_migrated/%"
+            ORDER BY
+              uid
+        ;');
+        $rows = array();
+        if ($result === null) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        } else {
+            while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
+                $rows[] = $row;
+            }
+        }
+        $this->databaseConnection->sql_free_result($result);
+
+        return $rows;
+    }
+
+    /**
      * Get array of sys_file records in the _migrated folder with sha1 matching documents outside of
      * the _migrated folder.
      *
@@ -393,6 +477,8 @@ class UndoubleCommandController extends AbstractCommandController
     protected function getMigratableDocumentsInMigratedFolder()
     {
         $result = $this->databaseConnection->sql_query('SELECT
+              COUNT(migrated.sha1) AS total,
+              migrated.size,
               migrated.sha1,
               migrated.uid         AS oldUid,
               alternate.uid        AS newUid,
@@ -405,7 +491,9 @@ class UndoubleCommandController extends AbstractCommandController
               NOT migrated.uid = alternate.uid
               AND migrated.identifier LIKE "/_migrated/%"
               AND alternate.identifier LIKE "/_migrated/%"
+            GROUP BY migrated.sha1
             ORDER BY
+              total DESC,
               oldUid DESC,
               newUid ASC
         ;');
@@ -423,20 +511,19 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
-     * Get array of sys_file records in the _migrated grouped by sha1.
+     * Get array of sys_file records in the _migrated folder
      *
      * @since 1.2.0
      *
      * @return array
      */
-    protected function getMasterSha1ListForMigratedFolder()
+    protected function getSha1ListForMigratedFolder()
     {
         $result = $this->databaseConnection->sql_query('SELECT
               uid,
               sha1
             FROM sys_file
             WHERE identifier LIKE "/_migrated/%"
-            GROUP BY sha1
             ORDER BY uid
         ;');
         $rows = array();
@@ -826,11 +913,10 @@ class UndoubleCommandController extends AbstractCommandController
      * @param string $table
      * @param string $field
      * @param array $row
-     * @param array $uidMap
      *
      * @return mixed
      */
-    private function updateTypoLinkFields($table, $field, array $row, array $uidMap)
+    private function updateTypoLinkFields($table, $field, array $row)
     {
         $updateCount = 0;
         $originalContent = $row[$field];
@@ -848,9 +934,9 @@ class UndoubleCommandController extends AbstractCommandController
                 $matchingUid = (int)$result[1];
                 if ($matchingUid > 0) {
                     $linkRemainder = $result[2];
-                    if (isset($uidMap[$matchingUid])) {
+                    if (isset($this->uidMap[$matchingUid])) {
                         $matchingUids[] = $matchingUid;
-                        $replaceString = 'file:' . $uidMap[$matchingUid] . $linkRemainder;
+                        $replaceString = 'file:' . $this->uidMap[$matchingUid] . $linkRemainder;
                         $finalContent = str_replace($searchString, $replaceString, $finalContent);
                         $updateCount++;
                     }
@@ -870,7 +956,7 @@ class UndoubleCommandController extends AbstractCommandController
                             . ' AND ref_table = \'sys_file\''
                             . ' AND NOT tablename = \'sys_file_metadata\''
                             . ' AND NOT tablename = \'sys_file_reference\'',
-                            array('ref_uid' => $uidMap[$matchingUid])
+                            array('ref_uid' => $this->uidMap[$matchingUid])
                         );
                         if ($result === null) {
                             $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
@@ -892,11 +978,10 @@ class UndoubleCommandController extends AbstractCommandController
      * @param string $table
      * @param string $field
      * @param array $row
-     * @param array $uidMap
      *
      * @return mixed
      */
-    private function updateTypoLinkTagFields($table, $field, array $row, array $uidMap)
+    private function updateTypoLinkTagFields($table, $field, array $row)
     {
         $updateCount = 0;
 
@@ -916,9 +1001,9 @@ class UndoubleCommandController extends AbstractCommandController
                 if ($matchingUid > 0) {
                     $linkRemainder = $result[2];
                     $linkText = $result[3];
-                    if (isset($uidMap[$matchingUid])) {
+                    if (isset($this->uidMap[$matchingUid])) {
                         $matchingUids[] = $matchingUid;
-                        $replaceString = '<link file:' . $uidMap[$matchingUid] . $linkRemainder . '>' . $linkText . '</link>';
+                        $replaceString = '<link file:' . $this->uidMap[$matchingUid] . $linkRemainder . '>' . $linkText . '</link>';
                         $finalContent = str_replace($searchString, $replaceString, $finalContent);
                         $updateCount++;
                     }
@@ -939,7 +1024,7 @@ class UndoubleCommandController extends AbstractCommandController
                             . ' AND ref_table = \'sys_file\''
                             . ' AND NOT tablename = \'sys_file_metadata\''
                             . ' AND NOT tablename = \'sys_file_reference\'',
-                            array('ref_uid' => $uidMap[$matchingUid])
+                            array('ref_uid' => $this->uidMap[$matchingUid])
                         );
                         if ($result === null) {
                             $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
@@ -971,6 +1056,26 @@ class UndoubleCommandController extends AbstractCommandController
         );
         if ($result === null) {
             $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        }
+    }
+
+    /**
+     * Populate mapping of sha1 indexed array of lowest uid values
+     *
+     * These are most likely to be the original files
+     *
+     * @since 1.2.0
+     *
+     * @return void
+     */
+    protected function populateSha1Map()
+    {
+        $sha1List = $this->getSha1ListForMigratedFolder();
+        foreach ($sha1List as $row) {
+            if (!isset($this->sha1Map[$row['sha1']])
+                ||(isset($this->sha1Map[$row['sha1']]) && $this->sha1Map[$row['sha1']] > $row['uid'])) {
+                $this->sha1Map[$row['sha1']] = (int)$row['uid'];
+            }
         }
     }
 }
