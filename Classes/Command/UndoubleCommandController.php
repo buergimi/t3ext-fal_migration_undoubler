@@ -172,15 +172,18 @@ class UndoubleCommandController extends AbstractCommandController
     {
         $this->populateSha1MapFromMigratedFolder();
         $this->populateUidMap();
-        $this->message('Found ' . $this->successString(count($this->uidMap)) . ' files to undouble');
 
+        $this->message('Found ' . $this->successString(count($this->uidMap)) . ' files to undouble');
         $this->message();
+
         $this->warningMessage('Calling updateTypolinkFields command');
         $this->updateTypolinkFieldsCommand('', '', '', $dryRun);
         $this->message();
+
         $this->warningMessage('Calling updateTypolinkTagFields command');
         $this->updateTypolinkTagFieldsCommand('', '', '', $dryRun);
         $this->message();
+
         $this->warningMessage('Calling migratedfiles command');
         $this->migrateFileReferences('', $dryRun);
     }
@@ -198,15 +201,18 @@ class UndoubleCommandController extends AbstractCommandController
     {
         $this->populateSha1Map();
         $this->populateUidMap();
-        $this->message('Found ' . $this->successString(count($this->uidMap)) . ' files to undouble');
 
+        $this->message('Found ' . $this->successString(count($this->uidMap)) . ' files to undouble');
         $this->message();
+
         $this->warningMessage('Calling updateTypolinkFields command');
         $this->updateTypolinkFieldsCommand('', '', 'regular', $dryRun);
         $this->message();
+
         $this->warningMessage('Calling updateTypolinkTagFields command');
         $this->updateTypolinkTagFieldsCommand('', '', 'regular', $dryRun);
         $this->message();
+
         $this->warningMessage('Calling migratedfiles command');
         $this->migrateFileReferences('regular', $dryRun);
     }
@@ -257,7 +263,7 @@ class UndoubleCommandController extends AbstractCommandController
             'Found ' . $total . ' migratable records'
         );
         if (!$total) {
-            exit();
+            return;
         }
 
         foreach ($tableAndFieldMap as $table => $fields) {
@@ -331,7 +337,7 @@ class UndoubleCommandController extends AbstractCommandController
             'Found ' . $total . ' migratable records'
         );
         if (!$total) {
-            exit();
+            return;
         }
 
         foreach ($tableAndFieldMap as $table => $fields) {
@@ -1173,7 +1179,8 @@ class UndoubleCommandController extends AbstractCommandController
         $sha1List = $this->getSha1ListForFilesOutsideMigratedFolder();
         foreach ($sha1List as $row) {
             if (!isset($this->sha1Map[$row['sha1']])
-                ||(isset($this->sha1Map[$row['sha1']]) && $this->sha1Map[$row['sha1']] > $row['uid'])) {
+                || (isset($this->sha1Map[$row['sha1']]) && $this->sha1Map[$row['sha1']] > $row['uid'])
+            ) {
                 $this->sha1Map[$row['sha1']] = (int)$row['uid'];
             }
         }
@@ -1213,7 +1220,8 @@ class UndoubleCommandController extends AbstractCommandController
         $sha1List = $this->getSha1ListForMigratedFolder();
         foreach ($sha1List as $row) {
             if (!isset($this->sha1Map[$row['sha1']])
-                ||(isset($this->sha1Map[$row['sha1']]) && $this->sha1Map[$row['sha1']] > $row['uid'])) {
+                || (isset($this->sha1Map[$row['sha1']]) && $this->sha1Map[$row['sha1']] > $row['uid'])
+            ) {
                 $this->sha1Map[$row['sha1']] = (int)$row['uid'];
             }
         }
