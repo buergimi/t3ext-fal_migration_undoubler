@@ -25,6 +25,7 @@ namespace MaxServ\FalMigrationUndoubler\Command;
 
 use TYPO3\CMS\Core\Resource\Exception\FileOperationErrorException;
 use TYPO3\CMS\Core\Resource\Exception\InsufficientFileAccessPermissionsException;
+use TYPO3\CMS\Core\Resource\FileInterface;
 use TYPO3\CMS\Core\Utility\GeneralUtility;
 
 /**
@@ -481,8 +482,10 @@ class UndoubleCommandController extends AbstractCommandController
                 $this->infoMessage($progress . ' Removing ' . $oldUid);
                 if (!$this->isDryRun) {
                     try {
-                        $this->storage->deleteFile($this->storage->getFile($oldUid));
-//                        $freedBytes += $row['size'];
+                        /** @var FileInterface $file */
+                        $file = $this->storage->getFile($oldUid);
+                        $freedBytes += $file->getSize();
+                        $this->storage->deleteFile($file);
                     } catch (FileOperationErrorException $error) {
                         $this->errorMessage($error->getMessage());
                     } catch (InsufficientFileAccessPermissionsException $error) {
@@ -494,7 +497,7 @@ class UndoubleCommandController extends AbstractCommandController
             }
             $this->message();
             $this->message('Removed ' . $this->successString($total) . ' files from the _migrated folder.');
-//            $this->message('Freed ' . $this->successString(GeneralUtility::formatSize($freedBytes)));
+            $this->message('Freed ' . $this->successString(GeneralUtility::formatSize($freedBytes)));
         } catch (\RuntimeException $exception) {
             $this->errorMessage($exception->getMessage());
         }
