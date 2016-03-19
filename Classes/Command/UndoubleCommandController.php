@@ -177,11 +177,11 @@ class UndoubleCommandController extends AbstractCommandController
         $this->message();
 
         $this->warningMessage('Calling updateTypolinkFields command');
-        $this->updateTypolinkFieldsCommand('', '', '', $dryRun);
+        $this->updateTypolinkFieldsCommand('', '', 'internal', $dryRun);
         $this->message();
 
         $this->warningMessage('Calling updateTypolinkTagFields command');
-        $this->updateTypolinkTagFieldsCommand('', '', '', $dryRun);
+        $this->updateTypolinkTagFieldsCommand('', '', 'internal', $dryRun);
         $this->message();
 
         $this->warningMessage('Calling migratedfiles command');
@@ -235,7 +235,7 @@ class UndoubleCommandController extends AbstractCommandController
      * @param string $mode The mode to work in. Either 'internal' or 'regular'. Default: `internal`.
      * @param bool $dryRun Do a test run, no modifications.
      *
-     * @return void
+     * @return boolean|integer
      */
     public function updateTypolinkFieldsCommand($table = '', $field = '', $mode = 'internal', $dryRun = false)
     {
@@ -263,7 +263,7 @@ class UndoubleCommandController extends AbstractCommandController
             'Found ' . $total . ' migratable records'
         );
         if (!$total) {
-            return;
+            return false;
         }
 
         foreach ($tableAndFieldMap as $table => $fields) {
@@ -290,6 +290,7 @@ class UndoubleCommandController extends AbstractCommandController
         }
         $this->message();
         $this->message('Updated ' . $this->successString($updateCounter) . ' references.');
+        return $updateCounter;
     }
 
     /**
@@ -310,7 +311,7 @@ class UndoubleCommandController extends AbstractCommandController
      * @param string $mode The mode to work in. Either 'internal' or 'regular'. Default: `internal`.
      * @param bool $dryRun Do a test run, no modifications.
      *
-     * @return void
+     * @return boolean|integer
      */
     public function updateTypolinkTagFieldsCommand($table = '', $field = '', $mode = 'internal', $dryRun = false)
     {
@@ -337,7 +338,7 @@ class UndoubleCommandController extends AbstractCommandController
             'Found ' . $total . ' migratable records'
         );
         if (!$total) {
-            return;
+            return false;
         }
 
         foreach ($tableAndFieldMap as $table => $fields) {
@@ -364,6 +365,7 @@ class UndoubleCommandController extends AbstractCommandController
         }
         $this->message();
         $this->message('Updated ' . $this->successString($updateCounter) . ' references.');
+        return $updateCounter;
     }
 
     /**
@@ -381,7 +383,7 @@ class UndoubleCommandController extends AbstractCommandController
      * @param string $mode The mode to work in. Either 'internal' or 'regular'. Default: `internal`.
      * @param bool $dryRun Do a test run, no modifications.
      *
-     * @return void
+     * @return false|integer
      */
     public function migrateFileReferences($mode = 'internal', $dryRun = false)
     {
@@ -416,56 +418,71 @@ class UndoubleCommandController extends AbstractCommandController
             }
             $this->message();
             $this->message('Updated ' . $this->successString($updateCount) . ' references to files from the _migrated folder.');
+            return $updateCount;
         } catch (\RuntimeException $exception) {
             $this->errorMessage($exception->getMessage());
         }
+        return false;
     }
 
     /**
-     * Remove files from _migrated folder
+     * Remove files with duplicates inside of the _migrated folder
      *
-     * Removes files with counterparts outside of the _migrated folder and without references
+     * Removes files with counterparts inside of the _migrated folder and without references
      * in sys_file_reference from the _migrated folder.
      *
      * @since 1.1.0
      *
      * @param bool $dryRun Do a test run, no modifications.
-     * @param bool $iKnowWhatImDoing Do you know what you are doing?
+     * @param bool $iUpdatedReferencesAndHaveBackups Do you know what you are doing?
      *
      * @return void
      */
-    public function removeMigratedFilesCommand($dryRun = false, $iKnowWhatImDoing = false)
+    public function removeDuplicatesInMigratedFolderCommand($dryRun = false, $iUpdatedReferencesAndHaveBackups = false)
     {
-        $this->headerMessage('Removing files without references from _migrated folder');
-        if (!$iKnowWhatImDoing) {
+        $this->headerMessage('Removing duplicate files without references from _migrated folder');
+        if (!$iUpdatedReferencesAndHaveBackups) {
             $this->warningMessage('This will remove files from the _migrated folder.');
             $this->warningMessage('Are you sure you don\'t have any typolink or typolink_tag enabled fields that may have references');
             $this->warningMessage('to these files? This task only checks the sys_file_reference table.');
             $this->warningMessage('');
             $this->warningMessage('You can update references to these files by running the commands:');
-            $this->warningMessage('- undouble:migratedfiles');
-            $this->warningMessage('- undouble:updtetypolinkfields');
-            $this->warningMessage('- undouble:updtetypolinktagfields');
+            $this->warningMessage('- undouble:migratedinternal');
+            $this->warningMessage('- undouble:migrated');
             $this->warningMessage('');
-            $this->warningMessage('Please specify the option --i-know-what-im-doing');
+            $this->warningMessage('Please specify the option --i-updated-references-and-have-backups');
             exit();
         }
         $this->isDryRun = $dryRun;
         $counter = 0;
         $freedBytes = 0;
         try {
-            $result = $this->getMigratableDocumentsWithoutReferences();
-            $total = count($result);
+            if (!count($this->uidMap)) {
+                $this->populateSha1MapFromMigratedFolder();
+                $this->populateUidMap();
+            }
+            $total = count($this->uidMap);
             $this->infoMessage(
-                'Found ' . $total . ' records in _migrated folder that have counterparts outside of there'
+                'Found ' . $total . ' records in _migrated that have counterparts inside of there'
             );
-            foreach ($result as $row) {
+
+            // Do a dry-runs to find still existing references. Just to be sure you weren't lying to us!
+            $updateCount = 0;
+            $updateCount += $this->updateTypolinkFieldsCommand('', '', 'internal', true);
+            $updateCount += $this->updateTypolinkTagFieldsCommand('', '', 'internal', true);
+            $updateCount += $this->migrateFileReferences('', true);
+
+            if ($updateCount !== false && $updateCount > 0) {
+                $this->errorMessage('Not deleting files; ' . $this->warningString($updateCount) . $this->errorString(' files still hold references.'));
+                exit();
+            }
+            foreach ($this->uidMap as $oldUid => $newUid) {
                 $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
-                $this->infoMessage($progress . ' Removing ' . $row['oldIdentifier']);
+                $this->infoMessage($progress . ' Removing ' . $oldUid);
                 if (!$this->isDryRun) {
                     try {
-                        $this->storage->deleteFile($this->storage->getFile($row['oldIdentifier']));
-                        $freedBytes += $row['size'];
+                        $this->storage->deleteFile($this->storage->getFile($oldUid));
+//                        $freedBytes += $row['size'];
                     } catch (FileOperationErrorException $error) {
                         $this->errorMessage($error->getMessage());
                     } catch (InsufficientFileAccessPermissionsException $error) {
@@ -477,7 +494,7 @@ class UndoubleCommandController extends AbstractCommandController
             }
             $this->message();
             $this->message('Removed ' . $this->successString($total) . ' files from the _migrated folder.');
-            $this->message('Freed ' . $this->successString(GeneralUtility::formatSize($freedBytes)));
+//            $this->message('Freed ' . $this->successString(GeneralUtility::formatSize($freedBytes)));
         } catch (\RuntimeException $exception) {
             $this->errorMessage($exception->getMessage());
         }
