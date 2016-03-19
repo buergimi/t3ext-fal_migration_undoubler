@@ -169,7 +169,7 @@ class UndoubleCommandController extends AbstractCommandController
      *
      * @return void
      */
-    public function migratedInternalCommand($dryRun = false)
+    public function migratedInMigratedFolderCommand($dryRun = false)
     {
         $this->populateSha1MapFromMigratedFolder();
         $this->populateUidMap();
@@ -216,6 +216,231 @@ class UndoubleCommandController extends AbstractCommandController
 
         $this->warningMessage('Calling migratedfiles command');
         $this->migrateFileReferences('regular', $dryRun);
+    }
+
+    /**
+     * Migrate references to files in _migrated folder
+     *
+     * De-duplication of files in _migrated folder. Relations to files in migrated folder will be re-linked to an
+     * identical file outside of the _migrated folder.
+     *
+     * The `$mode` parameter can be set to either `internal` or `regular`. If it is 'internal', the operation will be
+     * performed with files having duplicates 'inside' of the _migrated folder. If set to 'regular', the operation will
+     * be performed with files having duplicates 'outside' of the _migrated folder.
+     *
+     * @since 1.2.0
+     *
+     * @param string $mode The mode to work in. Either 'internal' or 'regular'. Default: `internal`.
+     * @param bool $dryRun Do a test run, no modifications.
+     *
+     * @return false|integer
+     */
+    public function migrateFileReferences($mode = 'internal', $dryRun = false)
+    {
+        $this->headerMessage('Normalizing _migrated folder');
+        $this->isDryRun = $dryRun;
+        $counter = 0;
+        try {
+            if (!count($this->uidMap)) {
+                if ($mode === 'internal') {
+                    $this->populateSha1MapFromMigratedFolder();
+                } else {
+                    $this->populateSha1Map();
+                }
+                $this->populateUidMap();
+            }
+            $total = count($this->uidMap);
+            $this->infoMessage(
+                'Found ' . $total . ' records in _migrated folder with references that have counterparts outside of there'
+            );
+            $updateCount = 0;
+            foreach ($this->uidMap as $oldUid => $newUid) {
+                $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
+                if (!$this->isDryRun) {
+                    $updates = $this->updateReferencesToFile($oldUid, $newUid);
+                } else {
+                    $updates = $this->countReferencesToFile($oldUid);
+                }
+                $updateCount += $updates;
+                if ($updates) {
+                    $this->message($progress . ' Updated ' . $this->successString($updates) . ' references for ' . $oldUid);
+                }
+            }
+            $this->message();
+            if ($this->isDryRun) {
+                $this->message('Would have updated ' . $this->successString($updateCount) . ' references to files from the _migrated folder.');
+            } else {
+                $this->message('Updated ' . $this->successString($updateCount) . ' references to files from the _migrated folder.');
+            }
+            return $updateCount;
+        } catch (\RuntimeException $exception) {
+            $this->errorMessage($exception->getMessage());
+        }
+        return false;
+    }
+
+    /**
+     * Remove files with duplicates inside of the _migrated folder
+     *
+     * Removes files with counterparts inside of the _migrated folder and without references to them.
+     *
+     * @since 1.1.0
+     *
+     * @param bool $dryRun Do a test run, no modifications.
+     * @param bool $iUpdatedReferencesAndHaveBackups Do you know what you are doing?
+     *
+     * @return void
+     */
+    public function removeDuplicatesInMigratedFolderCommand($dryRun = false, $iUpdatedReferencesAndHaveBackups = false)
+    {
+        $this->headerMessage('Removing duplicate files without references from _migrated folder');
+        if (!$iUpdatedReferencesAndHaveBackups) {
+            $this->warningMessage('This will remove files from the _migrated folder.');
+            $this->warningMessage('Are you sure you don\'t have any typolink or typolink_tag enabled fields that may have references');
+            $this->warningMessage('to these files? This task only checks the sys_file_reference table.');
+            $this->warningMessage('');
+            $this->warningMessage('You can update references to these files by running the commands:');
+            $this->warningMessage('- undouble:migratedinternal');
+            $this->warningMessage('- undouble:migrated');
+            $this->warningMessage('');
+            $this->warningMessage('Please specify the option --i-updated-references-and-have-backups');
+            exit();
+        }
+        $this->isDryRun = $dryRun;
+        $counter = 0;
+        $freedBytes = 0;
+        try {
+            if (!count($this->uidMap)) {
+                $this->populateSha1MapFromMigratedFolder();
+                $this->populateUidMap();
+            }
+            $total = count($this->uidMap);
+            $this->infoMessage(
+                'Found ' . $total . ' records in _migrated that have counterparts inside of there'
+            );
+
+            // Do a dry-runs to find still existing references. Just to be sure you weren't lying to us!
+            $updateCount = 0;
+            $updateCount += $this->updateTypolinkFieldsCommand('', '', 'internal', true);
+            $updateCount += $this->updateTypolinkTagFieldsCommand('', '', 'internal', true);
+            $updateCount += $this->migrateFileReferences('', true);
+
+            if ($updateCount !== false && $updateCount > 0) {
+                $this->message();
+                $this->errorMessage('Not deleting files; ' . $this->warningString($updateCount) . $this->errorString(' references found pointing to these files.'));
+                $this->message();
+                exit();
+            }
+            foreach ($this->uidMap as $oldUid => $newUid) {
+                $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
+                $this->infoMessage($progress . ' Removing ' . $oldUid);
+                if (!$this->isDryRun) {
+                    try {
+                        /** @var FileInterface $file */
+                        $file = $this->storage->getFile($oldUid);
+                        $freedBytes += $file->getSize();
+                        $this->storage->deleteFile($file);
+                    } catch (FileOperationErrorException $error) {
+                        $this->errorMessage($error->getMessage());
+                    } catch (InsufficientFileAccessPermissionsException $error) {
+                        $this->errorMessage($error->getMessage());
+                        $this->errorMessage('Please edit the _cli_lowlevel user in the backend and ensure this user has access to the _migrated filemount.');
+                        exit();
+                    }
+                }
+            }
+            $this->message();
+            if ($this->isDryRun) {
+                $this->message('Would have removed ' . $this->successString($total) . ' files from the _migrated folder.');
+            } else {
+                $this->message('Removed ' . $this->successString($total) . ' files from the _migrated folder.');
+                $this->message('Freed ' . $this->successString(GeneralUtility::formatSize($freedBytes)));
+            }
+        } catch (\RuntimeException $exception) {
+            $this->errorMessage($exception->getMessage());
+        }
+    }
+
+    /**
+     * Remove files with duplicates outside of the _migrated folder
+     *
+     * Removes files with counterparts outside of the _migrated folder and without references to them.
+     *
+     * @since 1.1.0
+     *
+     * @param bool $dryRun Do a test run, no modifications.
+     * @param bool $iUpdatedReferencesAndHaveBackups Do you know what you are doing?
+     *
+     * @return void
+     */
+    public function removeDuplicatesCommand($dryRun = false, $iUpdatedReferencesAndHaveBackups = false)
+    {
+        $this->headerMessage('Removing duplicate files without references from _migrated folder');
+        if (!$iUpdatedReferencesAndHaveBackups) {
+            $this->warningMessage('This will remove files from the _migrated folder.');
+            $this->warningMessage('Are you sure you don\'t have any typolink or typolink_tag enabled fields that may have references');
+            $this->warningMessage('to these files? This task only checks the sys_file_reference table.');
+            $this->warningMessage('');
+            $this->warningMessage('You can update references to these files by running the commands:');
+            $this->warningMessage('- undouble:migratedinternal');
+            $this->warningMessage('- undouble:migrated');
+            $this->warningMessage('');
+            $this->warningMessage('Please specify the option --i-updated-references-and-have-backups');
+            exit();
+        }
+        $this->isDryRun = $dryRun;
+        $counter = 0;
+        $freedBytes = 0;
+        try {
+            if (!count($this->uidMap)) {
+                $this->populateSha1Map();
+                $this->populateUidMap();
+            }
+            $total = count($this->uidMap);
+            $this->infoMessage(
+                'Found ' . $total . ' records in _migrated that have counterparts inside of there'
+            );
+
+            // Do a dry-runs to find still existing references. Just to be sure you weren't lying to us!
+            $updateCount = 0;
+            $updateCount += $this->updateTypolinkFieldsCommand('', '', 'regular', true);
+            $updateCount += $this->updateTypolinkTagFieldsCommand('', '', 'regular', true);
+            $updateCount += $this->migrateFileReferences('', true);
+
+            if ($updateCount !== false && $updateCount > 0) {
+                $this->message();
+                $this->errorMessage('Not deleting files; ' . $this->warningString($updateCount) . $this->errorString(' references found pointing to these files.'));
+                $this->message();
+                exit();
+            }
+            foreach ($this->uidMap as $oldUid => $newUid) {
+                $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
+                $this->infoMessage($progress . ' Removing ' . $oldUid);
+                if (!$this->isDryRun) {
+                    try {
+                        /** @var FileInterface $file */
+                        $file = $this->storage->getFile($oldUid);
+                        $freedBytes += $file->getSize();
+                        $this->storage->deleteFile($file);
+                    } catch (FileOperationErrorException $error) {
+                        $this->errorMessage($error->getMessage());
+                    } catch (InsufficientFileAccessPermissionsException $error) {
+                        $this->errorMessage($error->getMessage());
+                        $this->errorMessage('Please edit the _cli_lowlevel user in the backend and ensure this user has access to the _migrated filemount.');
+                        exit();
+                    }
+                }
+            }
+            $this->message();
+            if ($this->isDryRun) {
+                $this->message('Would have removed ' . $this->successString($total) . ' files from the _migrated folder.');
+            } else {
+                $this->message('Removed ' . $this->successString($total) . ' files from the _migrated folder.');
+                $this->message('Freed ' . $this->successString(GeneralUtility::formatSize($freedBytes)));
+            }
+        } catch (\RuntimeException $exception) {
+            $this->errorMessage($exception->getMessage());
+        }
     }
 
     /**
@@ -290,7 +515,11 @@ class UndoubleCommandController extends AbstractCommandController
             }
         }
         $this->message();
-        $this->message('Updated ' . $this->successString($updateCounter) . ' references.');
+        if ($this->isDryRun) {
+            $this->message('Would have updated ' . $this->successString($updateCounter) . ' references.');
+        } else {
+            $this->message('Updated ' . $this->successString($updateCounter) . ' references.');
+        }
         return $updateCounter;
     }
 
@@ -365,142 +594,12 @@ class UndoubleCommandController extends AbstractCommandController
             }
         }
         $this->message();
-        $this->message('Updated ' . $this->successString($updateCounter) . ' references.');
+        if ($this->isDryRun) {
+            $this->message('Would have updated ' . $this->successString($updateCounter) . ' references.');
+        } else {
+            $this->message('Updated ' . $this->successString($updateCounter) . ' references.');
+        }
         return $updateCounter;
-    }
-
-    /**
-     * Migrate references to files in _migrated folder
-     *
-     * De-duplication of files in _migrated folder. Relations to files in migrated folder will be re-linked to an
-     * identical file outside of the _migrated folder.
-     *
-     * The `$mode` parameter can be set to either `internal` or `regular`. If it is 'internal', the operation will be
-     * performed with files having duplicates 'inside' of the _migrated folder. If set to 'regular', the operation will
-     * be performed with files having duplicates 'outside' of the _migrated folder.
-     *
-     * @since 1.2.0
-     *
-     * @param string $mode The mode to work in. Either 'internal' or 'regular'. Default: `internal`.
-     * @param bool $dryRun Do a test run, no modifications.
-     *
-     * @return false|integer
-     */
-    public function migrateFileReferences($mode = 'internal', $dryRun = false)
-    {
-        $this->headerMessage('Normalizing _migrated folder');
-        $this->isDryRun = $dryRun;
-        $counter = 0;
-        try {
-            if (!count($this->uidMap)) {
-                if ($mode === 'internal') {
-                    $this->populateSha1MapFromMigratedFolder();
-                } else {
-                    $this->populateSha1Map();
-                }
-                $this->populateUidMap();
-            }
-            $total = count($this->uidMap);
-            $this->infoMessage(
-                'Found ' . $total . ' records in _migrated folder with references that have counterparts outside of there'
-            );
-            $updateCount = 0;
-            foreach ($this->uidMap as $oldUid => $newUid) {
-                $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
-                if (!$this->isDryRun) {
-                    $updates = $this->updateReferencesToFile($oldUid, $newUid);
-                } else {
-                    $updates = $this->countReferencesToFile($oldUid);
-                }
-                $updateCount += $updates;
-                if ($updates) {
-                    $this->message($progress . ' Updated ' . $this->successString($updates) . ' references for ' . $oldUid);
-                }
-            }
-            $this->message();
-            $this->message('Updated ' . $this->successString($updateCount) . ' references to files from the _migrated folder.');
-            return $updateCount;
-        } catch (\RuntimeException $exception) {
-            $this->errorMessage($exception->getMessage());
-        }
-        return false;
-    }
-
-    /**
-     * Remove files with duplicates inside of the _migrated folder
-     *
-     * Removes files with counterparts inside of the _migrated folder and without references
-     * in sys_file_reference from the _migrated folder.
-     *
-     * @since 1.1.0
-     *
-     * @param bool $dryRun Do a test run, no modifications.
-     * @param bool $iUpdatedReferencesAndHaveBackups Do you know what you are doing?
-     *
-     * @return void
-     */
-    public function removeDuplicatesInMigratedFolderCommand($dryRun = false, $iUpdatedReferencesAndHaveBackups = false)
-    {
-        $this->headerMessage('Removing duplicate files without references from _migrated folder');
-        if (!$iUpdatedReferencesAndHaveBackups) {
-            $this->warningMessage('This will remove files from the _migrated folder.');
-            $this->warningMessage('Are you sure you don\'t have any typolink or typolink_tag enabled fields that may have references');
-            $this->warningMessage('to these files? This task only checks the sys_file_reference table.');
-            $this->warningMessage('');
-            $this->warningMessage('You can update references to these files by running the commands:');
-            $this->warningMessage('- undouble:migratedinternal');
-            $this->warningMessage('- undouble:migrated');
-            $this->warningMessage('');
-            $this->warningMessage('Please specify the option --i-updated-references-and-have-backups');
-            exit();
-        }
-        $this->isDryRun = $dryRun;
-        $counter = 0;
-        $freedBytes = 0;
-        try {
-            if (!count($this->uidMap)) {
-                $this->populateSha1MapFromMigratedFolder();
-                $this->populateUidMap();
-            }
-            $total = count($this->uidMap);
-            $this->infoMessage(
-                'Found ' . $total . ' records in _migrated that have counterparts inside of there'
-            );
-
-            // Do a dry-runs to find still existing references. Just to be sure you weren't lying to us!
-            $updateCount = 0;
-            $updateCount += $this->updateTypolinkFieldsCommand('', '', 'internal', true);
-            $updateCount += $this->updateTypolinkTagFieldsCommand('', '', 'internal', true);
-            $updateCount += $this->migrateFileReferences('', true);
-
-            if ($updateCount !== false && $updateCount > 0) {
-                $this->errorMessage('Not deleting files; ' . $this->warningString($updateCount) . $this->errorString(' files still hold references.'));
-                exit();
-            }
-            foreach ($this->uidMap as $oldUid => $newUid) {
-                $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
-                $this->infoMessage($progress . ' Removing ' . $oldUid);
-                if (!$this->isDryRun) {
-                    try {
-                        /** @var FileInterface $file */
-                        $file = $this->storage->getFile($oldUid);
-                        $freedBytes += $file->getSize();
-                        $this->storage->deleteFile($file);
-                    } catch (FileOperationErrorException $error) {
-                        $this->errorMessage($error->getMessage());
-                    } catch (InsufficientFileAccessPermissionsException $error) {
-                        $this->errorMessage($error->getMessage());
-                        $this->errorMessage('Please edit the _cli_lowlevel user in the backend and ensure this user has access to the _migrated filemount.');
-                        exit();
-                    }
-                }
-            }
-            $this->message();
-            $this->message('Removed ' . $this->successString($total) . ' files from the _migrated folder.');
-            $this->message('Freed ' . $this->successString(GeneralUtility::formatSize($freedBytes)));
-        } catch (\RuntimeException $exception) {
-            $this->errorMessage($exception->getMessage());
-        }
     }
 
     /**
@@ -521,46 +620,6 @@ class UndoubleCommandController extends AbstractCommandController
               identifier LIKE "/_migrated/%"
             ORDER BY
               uid
-        ;');
-        $rows = array();
-        if ($result === null) {
-            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
-        } else {
-            while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
-                $rows[] = $row;
-            }
-        }
-        $this->databaseConnection->sql_free_result($result);
-
-        return $rows;
-    }
-
-    /**
-     * Get array of sys_file records in the _migrated folder with sha1 matching documents outside of
-     * the _migrated folder.
-     *
-     * @since 1.1.0
-     *
-     * @return array
-     */
-    protected function getMigratableDocuments()
-    {
-        $result = $this->databaseConnection->sql_query('SELECT
-            migrated.size,
-            migrated.uid         AS oldUid,
-            alternate.uid        AS newUid,
-            migrated.identifier  AS oldIdentifier,
-            alternate.identifier AS newIdentifier
-        FROM sys_file AS migrated
-            JOIN sys_file AS alternate
-                ON migrated.sha1 = alternate.sha1
-        WHERE
-            NOT migrated.uid = alternate.uid
-            AND migrated.identifier LIKE "/_migrated/%"
-            AND alternate.identifier NOT LIKE "/_migrated/%"
-        ORDER BY
-            oldUid ASC,
-            newUid DESC
         ;');
         $rows = array();
         if ($result === null) {
@@ -824,89 +883,6 @@ class UndoubleCommandController extends AbstractCommandController
         $this->databaseConnection->sql_free_result($result);
 
         return $count;
-    }
-
-    /**
-     * Get array of sys_file records in the _migrated folder with sha1 matching documents outside of
-     * the _migrated folder with references in the sys_file_reference table.
-     *
-     * @since 1.1.0
-     *
-     * @return array
-     */
-    protected function getMigratableDocumentsWithReferences()
-    {
-        $result = $this->databaseConnection->sql_query('SELECT
-            migrated.size,
-            migrated.uid         AS oldUid,
-            alternate.uid        AS newUid,
-            migrated.identifier  AS oldIdentifier,
-            alternate.identifier AS newIdentifier
-        FROM sys_file AS migrated
-            JOIN sys_file AS alternate
-                ON migrated.sha1 = alternate.sha1
-            JOIN sys_file_reference
-                ON sys_file_reference.uid_local = migrated.uid
-        WHERE
-            NOT migrated.uid = alternate.uid
-            AND migrated.identifier LIKE "/_migrated/%"
-            AND alternate.identifier NOT LIKE "/_migrated/%"
-        GROUP BY
-            migrated.uid
-        ;');
-        $rows = array();
-        if ($result === null) {
-            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
-        } else {
-            while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
-                $rows[] = $row;
-            }
-        }
-        $this->databaseConnection->sql_free_result($result);
-
-        return $rows;
-    }
-
-    /**
-     * Get array of sys_file records in the _migrated folder with sha1 matching documents outside of
-     * the _migrated folder but without entries in the sys_file_reference table.
-     *
-     * @since 1.1.0
-     *
-     * @return array
-     */
-    protected function getMigratableDocumentsWithoutReferences()
-    {
-        $result = $this->databaseConnection->sql_query('SELECT
-            migrated.size,
-            migrated.uid         AS oldUid,
-            alternate.uid        AS newUid,
-            migrated.identifier  AS oldIdentifier,
-            alternate.identifier AS newIdentifier
-        FROM sys_file AS migrated
-            JOIN sys_file AS alternate
-                ON migrated.sha1 = alternate.sha1
-            LEFT OUTER JOIN sys_file_reference
-                ON sys_file_reference.uid_local = migrated.uid
-        WHERE
-            NOT migrated.uid = alternate.uid
-            AND migrated.identifier LIKE "/_migrated/%"
-            AND alternate.identifier NOT LIKE "/_migrated/%"
-            AND sys_file_reference.uid_foreign IS NULL
-        GROUP BY
-            migrated.uid
-        ;');
-        $rows = array();
-        if ($result === null) {
-            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
-        } else {
-            while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
-                $rows[] = $row;
-            }
-        }
-        $this->databaseConnection->sql_free_result($result);
-
-        return $rows;
     }
 
     /**
