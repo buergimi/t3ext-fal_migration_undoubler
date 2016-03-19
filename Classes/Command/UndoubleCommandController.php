@@ -30,6 +30,33 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
 /**
  * Undouble tasks
  *
+ * ## Undoubling files which have duplicates inside the _migrated folder
+ * All tasks should be executed on the contents of the _migrated folder first to resolve duplicates inside of there.
+ *
+ * ### Build a map of unique sha1 values
+ * First we ask the database to give us a list of file uids and sha1 values. Then we turn that into an array of unique
+ * sha1 values and lowest uids. These files are most likely the 'original' files. Not the copies with _01, _02 etc. We
+ * call this the sha1Map.
+ *
+ * ### Build a map of duplicate files
+ * Then we fetch a list of all the file uids and their sha1 values. We iterate over the the result and for each row we
+ * look up the sha1 values in the sha1Map. If the value found in the sha1Map does not match the uid of the row, then
+ * we are dealing with a duplicate. We know this because the sha1Map contains all unique sha1 values with the 'lowest'
+ * ids.
+ *
+ * We add the uid of the duplicate row to the idMap array. The index is the row uid and the value is the (lower) id we
+ * found in the sha1Map.
+ *
+ * ### Update references to duplicate files
+ * Now we can use the constructed idMap to move references to duplicate files to the original id's.
+ *
+ * ### Remove duplicate files without references
+ * If we are positive that all references pointing to duplicates have been updated, we can remove the duplicate files.
+ *
+ * ## Undoubling files that have duplicates outside of the _migrated folder
+ * Now we execute the same tasks. This time however, we build the sha1 map only from files outside of the _migrated
+ * folder.
+ *
  * @since 1.0.0
  * @package MaxServ\FalMigrationUndoubler
  * @subpackage Controller
@@ -508,49 +535,6 @@ class UndoubleCommandController extends AbstractCommandController
         ORDER BY
             oldUid ASC,
             newUid DESC
-        ;');
-        $rows = array();
-        if ($result === null) {
-            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
-        } else {
-            while ($row = $this->databaseConnection->sql_fetch_assoc($result)) {
-                $rows[] = $row;
-            }
-        }
-        $this->databaseConnection->sql_free_result($result);
-
-        return $rows;
-    }
-
-    /**
-     * Get array of sys_file records in the _migrated folder with sha1 matching documents in the _migrated folder.
-     *
-     * @since 1.2.0
-     *
-     * @return array
-     */
-    protected function getMigratableDocumentsInMigratedFolder()
-    {
-        $result = $this->databaseConnection->sql_query('SELECT
-              COUNT(migrated.sha1) AS total,
-              migrated.size,
-              migrated.sha1,
-              migrated.uid         AS oldUid,
-              alternate.uid        AS newUid,
-              migrated.identifier  AS oldIdentifier,
-              alternate.identifier AS newIdentifier
-            FROM sys_file AS migrated
-              JOIN sys_file AS alternate
-                ON migrated.sha1 = alternate.sha1
-            WHERE
-              NOT migrated.uid = alternate.uid
-              AND migrated.identifier LIKE "/_migrated/%"
-              AND alternate.identifier LIKE "/_migrated/%"
-            GROUP BY migrated.sha1
-            ORDER BY
-              total DESC,
-              oldUid DESC,
-              newUid ASC
         ;');
         $rows = array();
         if ($result === null) {
