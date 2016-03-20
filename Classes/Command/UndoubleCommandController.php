@@ -40,7 +40,7 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
  * call this the sha1Map.
  *
  * ### Build a map of duplicate files
- * Then we fetch a list of all the file uids and their sha1 values. We iterate over the result and for each row we
+ * Then we fetch a list of all the file uids and their sha1 values. We iterate overx the result and for each row we
  * look up the sha1 values in the sha1Map. If the value found in the sha1Map does not match the uid of the row, then
  * we are dealing with a duplicate. We know this because the sha1Map contains all unique sha1 values with the 'lowest'
  * ids.
@@ -169,6 +169,12 @@ class UndoubleCommandController extends AbstractCommandController
         foreach ($mostDuplicates as $row) {
             $this->message($this->successString($row['total']) . ' ' . $row['identifier']);
         }
+        $this->message();
+        $this->message('If you have more files in the _migrated/ folder, make sure that their copies');
+        $this->message('(most likely located inside the user_upload/ folder), also have an entry in the sys_file table.');
+        $this->message('This can e.g. be done by navigating to their folder in the file list module.');
+        $this->message('There is also a scheduler task called: File Abstraction Layer: Update storage index.');
+        $this->message('Otherwise, the extension will not recognize these files as duplicated.');
     }
 
     /**
