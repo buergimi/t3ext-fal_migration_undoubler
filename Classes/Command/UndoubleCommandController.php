@@ -65,6 +65,17 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
 class UndoubleCommandController extends AbstractCommandController
 {
     /**
+     * File identifier map
+     *
+     * Index is the original uid, value is the identifier of the original uid
+     *
+     * @since 1.2.0
+     *
+     * @var array
+     */
+    protected $identifierMap = [];
+
+    /**
      * Is this a dry run?
      *
      * @since 1.0.0
@@ -172,21 +183,28 @@ class UndoubleCommandController extends AbstractCommandController
     public function migratedInMigratedFolderCommand($dryRun = false)
     {
         $this->populateSha1MapFromMigratedFolder();
-        $this->populateUidMap();
+        $this->populateUidAndIdentifierMaps();
 
         $this->message('Found ' . $this->successString(count($this->uidMap)) . ' files to undouble');
         $this->message();
 
+        $updateCount = 0;
         $this->warningMessage('Calling updateTypolinkFields command');
-        $this->updateTypolinkFieldsCommand('', '', 'internal', $dryRun);
+        $updateCount += $this->updateTypolinkFieldsCommand('', '', 'internal', $dryRun);
         $this->message();
 
         $this->warningMessage('Calling updateTypolinkTagFields command');
-        $this->updateTypolinkTagFieldsCommand('', '', 'internal', $dryRun);
+        $updateCount += $this->updateTypolinkTagFieldsCommand('', '', 'internal', $dryRun);
         $this->message();
 
         $this->warningMessage('Calling migratedfiles command');
-        $this->migrateFileReferences('', $dryRun);
+        $updateCount += $this->migrateFileReferences('internal', $dryRun);
+
+        if ($updateCount !== false && $updateCount > 0) {
+            $this->message();
+            $this->errorMessage('Total references updated; ' . $this->warningString($updateCount));
+            $this->message();
+        }
     }
 
     /**
@@ -201,21 +219,28 @@ class UndoubleCommandController extends AbstractCommandController
     public function migratedCommand($dryRun = false)
     {
         $this->populateSha1Map();
-        $this->populateUidMap();
+        $this->populateUidAndIdentifierMaps();
 
         $this->message('Found ' . $this->successString(count($this->uidMap)) . ' files to undouble');
         $this->message();
 
+        $updateCount = 0;
         $this->warningMessage('Calling updateTypolinkFields command');
-        $this->updateTypolinkFieldsCommand('', '', 'regular', $dryRun);
+        $updateCount += $this->updateTypolinkFieldsCommand('', '', 'regular', $dryRun);
         $this->message();
 
         $this->warningMessage('Calling updateTypolinkTagFields command');
-        $this->updateTypolinkTagFieldsCommand('', '', 'regular', $dryRun);
+        $updateCount += $this->updateTypolinkTagFieldsCommand('', '', 'regular', $dryRun);
         $this->message();
 
         $this->warningMessage('Calling migratedfiles command');
-        $this->migrateFileReferences('regular', $dryRun);
+        $updateCount += $this->migrateFileReferences('regular', $dryRun);
+
+        if ($updateCount !== false && $updateCount > 0) {
+            $this->message();
+            $this->errorMessage('Total references updated; ' . $this->warningString($updateCount));
+            $this->message();
+        }
     }
 
     /**
@@ -247,7 +272,7 @@ class UndoubleCommandController extends AbstractCommandController
                 } else {
                     $this->populateSha1Map();
                 }
-                $this->populateUidMap();
+                $this->populateUidAndIdentifierMaps();
             }
             $total = count($this->uidMap);
             $this->infoMessage(
@@ -300,7 +325,7 @@ class UndoubleCommandController extends AbstractCommandController
             $this->warningMessage('to these files? This task only checks the sys_file_reference table.');
             $this->warningMessage('');
             $this->warningMessage('You can update references to these files by running the commands:');
-            $this->warningMessage('- undouble:migratedinternal');
+            $this->warningMessage('- undouble:migratedinmigratedfolder');
             $this->warningMessage('- undouble:migrated');
             $this->warningMessage('');
             $this->warningMessage('Please specify the option --i-updated-references-and-have-backups');
@@ -312,7 +337,7 @@ class UndoubleCommandController extends AbstractCommandController
         try {
             if (!count($this->uidMap)) {
                 $this->populateSha1MapFromMigratedFolder();
-                $this->populateUidMap();
+                $this->populateUidAndIdentifierMaps();
             }
             $total = count($this->uidMap);
             $this->infoMessage(
@@ -320,24 +345,33 @@ class UndoubleCommandController extends AbstractCommandController
             );
 
             // Do a dry-runs to find still existing references. Just to be sure you weren't lying to us!
+            $dryRunState = $this->isDryRun;
             $updateCount = 0;
             $updateCount += $this->updateTypolinkFieldsCommand('', '', 'internal', true);
             $updateCount += $this->updateTypolinkTagFieldsCommand('', '', 'internal', true);
-            $updateCount += $this->migrateFileReferences('', true);
+            $updateCount += $this->migrateFileReferences('internal', true);
+            $this->isDryRun = $dryRunState;
 
             if ($updateCount !== false && $updateCount > 0) {
                 $this->message();
                 $this->errorMessage('Not deleting files; ' . $this->warningString($updateCount) . $this->errorString(' references found pointing to these files.'));
                 $this->message();
+                $this->warningMessage('');
+                $this->warningMessage('Please run the command:');
+                $this->warningMessage('- undouble:migratedinmigratedfolder');
+                $this->warningMessage('');
                 exit();
             }
+            $this->message();
+            $this->warningMessage('Starting acutal file deletion.');
+            $this->message();
             foreach ($this->uidMap as $oldUid => $newUid) {
                 $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
-                $this->infoMessage($progress . ' Removing ' . $oldUid);
+                $this->infoMessage($progress . ' Removing ' . $this->identifierMap[$oldUid]);
                 if (!$this->isDryRun) {
                     try {
                         /** @var FileInterface $file */
-                        $file = $this->storage->getFile($oldUid);
+                        $file = $this->storage->getFile($this->identifierMap[$oldUid]);
                         $freedBytes += $file->getSize();
                         $this->storage->deleteFile($file);
                     } catch (FileOperationErrorException $error) {
@@ -382,7 +416,7 @@ class UndoubleCommandController extends AbstractCommandController
             $this->warningMessage('to these files? This task only checks the sys_file_reference table.');
             $this->warningMessage('');
             $this->warningMessage('You can update references to these files by running the commands:');
-            $this->warningMessage('- undouble:migratedinternal');
+            $this->warningMessage('- undouble:migratedinmigratedfolder');
             $this->warningMessage('- undouble:migrated');
             $this->warningMessage('');
             $this->warningMessage('Please specify the option --i-updated-references-and-have-backups');
@@ -394,7 +428,7 @@ class UndoubleCommandController extends AbstractCommandController
         try {
             if (!count($this->uidMap)) {
                 $this->populateSha1Map();
-                $this->populateUidMap();
+                $this->populateUidAndIdentifierMaps();
             }
             $total = count($this->uidMap);
             $this->infoMessage(
@@ -402,24 +436,33 @@ class UndoubleCommandController extends AbstractCommandController
             );
 
             // Do a dry-runs to find still existing references. Just to be sure you weren't lying to us!
+            $dryRunState = $this->isDryRun;
             $updateCount = 0;
             $updateCount += $this->updateTypolinkFieldsCommand('', '', 'regular', true);
             $updateCount += $this->updateTypolinkTagFieldsCommand('', '', 'regular', true);
-            $updateCount += $this->migrateFileReferences('', true);
+            $updateCount += $this->migrateFileReferences('regular', true);
+            $this->isDryRun = $dryRunState;
 
             if ($updateCount !== false && $updateCount > 0) {
                 $this->message();
                 $this->errorMessage('Not deleting files; ' . $this->warningString($updateCount) . $this->errorString(' references found pointing to these files.'));
                 $this->message();
+                $this->warningMessage('');
+                $this->warningMessage('Please run the command:');
+                $this->warningMessage('- undouble:migrated');
+                $this->warningMessage('');
                 exit();
             }
+            $this->message();
+            $this->warningMessage('Starting acutal file deletion.');
+            $this->message();
             foreach ($this->uidMap as $oldUid => $newUid) {
                 $progress = number_format(100 * ($counter++ / $total), 1) . '% of ' . $total;
-                $this->infoMessage($progress . ' Removing ' . $oldUid);
+                $this->infoMessage($progress . ' Removing ' . $this->identifierMap[$oldUid]);
                 if (!$this->isDryRun) {
                     try {
                         /** @var FileInterface $file */
-                        $file = $this->storage->getFile($oldUid);
+                        $file = $this->storage->getFile($this->identifierMap[$oldUid]);
                         $freedBytes += $file->getSize();
                         $this->storage->deleteFile($file);
                     } catch (FileOperationErrorException $error) {
@@ -482,7 +525,7 @@ class UndoubleCommandController extends AbstractCommandController
             } else {
                 $this->populateSha1Map();
             }
-            $this->populateUidMap();
+            $this->populateUidAndIdentifierMaps();
         }
         $total = count($this->uidMap);
         $this->infoMessage(
@@ -561,7 +604,7 @@ class UndoubleCommandController extends AbstractCommandController
             } else {
                 $this->populateSha1Map();
             }
-            $this->populateUidMap();
+            $this->populateUidAndIdentifierMaps();
         }
         $total = count($this->uidMap);
         $this->infoMessage(
@@ -614,7 +657,8 @@ class UndoubleCommandController extends AbstractCommandController
         $result = $this->databaseConnection->sql_query('SELECT
               uid,
               sha1,
-              size
+              size,
+              identifier
             FROM sys_file
             WHERE
               identifier LIKE "/_migrated/%"
@@ -1183,7 +1227,7 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
-     * Populate mapping of old-uid => new-uid indexed with old-uid
+     * Populate mapping of old-uid => new-uid indexed with old-uid map and mapping of old-uid to identifier map
      *
      * These are most likely to be the original files
      *
@@ -1191,13 +1235,14 @@ class UndoubleCommandController extends AbstractCommandController
      *
      * @return void
      */
-    protected function populateUidMap()
+    protected function populateUidAndIdentifierMaps()
     {
         $documents = $this->getDocumentsInMigratedFolder();
         foreach ($documents as $document) {
             $document['uid'] = (int)$document['uid'];
             if ($document['uid'] !== $this->sha1Map[$document['sha1']]) {
                 $this->uidMap[$document['uid']] = (int)$this->sha1Map[$document['sha1']];
+                $this->identifierMap[$document['uid']] = $document['identifier'];
             }
         }
     }
