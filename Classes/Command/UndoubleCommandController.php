@@ -40,7 +40,7 @@ use TYPO3\CMS\Core\Utility\GeneralUtility;
  * call this the sha1Map.
  *
  * ### Build a map of duplicate files
- * Then we fetch a list of all the file uids and their sha1 values. We iterate over the the result and for each row we
+ * Then we fetch a list of all the file uids and their sha1 values. We iterate over the result and for each row we
  * look up the sha1 values in the sha1Map. If the value found in the sha1Map does not match the uid of the row, then
  * we are dealing with a duplicate. We know this because the sha1Map contains all unique sha1 values with the 'lowest'
  * ids.
