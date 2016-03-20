@@ -151,7 +151,8 @@ Options
 ``--dry-run``
   Do a test run, no modifications.
 ``--iupdated-references-and-have-backups``
-  Do you know what you are doing?
+  Do you know what you are doing? If provided, will remove the files. Can be used together with --dry-run to get a
+  preview of the files to be removed.
 
 undouble:removeduplicates
 *************************
@@ -166,7 +167,8 @@ Options
 ``--dry-run``
   Do a test run, no modifications.
 ``--iupdated-references-and-have-backups``
-  Do you know what you are doing?
+  Do you know what you are doing? If provided, will remove the files. Can be used together with --dry-run to get a
+  preview of the files to be removed.
 
 undouble:updatetypolinkfields
 *****************************
