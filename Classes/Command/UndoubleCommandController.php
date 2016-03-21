@@ -130,6 +130,7 @@ class UndoubleCommandController extends AbstractCommandController
     public function __construct()
     {
         parent::__construct();
+        $this->exitWhenEntriesFoundInStorageZero();
         /** @var $storageRepository \TYPO3\CMS\Core\Resource\StorageRepository */
         $storageRepository = GeneralUtility::makeInstance('TYPO3\\CMS\\Core\\Resource\\StorageRepository');
         $storages = $storageRepository->findAll();
@@ -653,6 +654,31 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
+     * Exit when sys_file entries in storage zero are found
+     *
+     * I have seen entries in storage 0 in several installations. These installs had exactly one storage in the backend
+     * and that one has ID 1. They never had another one. Additionally, having a storage with sys_file_storage.uid=0 is
+     * technically impossible as this uid is an integer with auto_increment, where the first value to be inserted is 1
+     * and not 0. I think the fact that entries in storage 0 are there, is a bug.
+     *
+     * @return void
+     */
+    protected function exitWhenEntriesFoundInStorageZero() {
+        if ($this->hasRecordsAttachedToStorageZero()) {
+            $this->headerMessage('warning', 'Invalid entries found');
+            $this->warningMessage('The sys_file table in your database contains entries, which point to files inside the /fileadmin/_migrated folder');
+            $this->warningMessage('using wrong information: They use storage ID 0 and an identifier starting with "/fileadmin/_migrated".');
+            $this->warningMessage('Storage ID 0 however does not exist.');
+            $this->message();
+            $this->warningMessage('These entries can cause the extension to work incorrectly.');
+            $this->message();
+            $this->warningMessage('You are strongly advised to remove these wrong entries before using this extension.');
+            $this->message();
+            exit();
+        }
+    }
+
+    /**
      * Get array of sys_file records in the _migrated folder.
      *
      * @since 1.2.0
@@ -1165,6 +1191,26 @@ class UndoubleCommandController extends AbstractCommandController
         }
 
         return $updateCount;
+    }
+
+    /**
+     * Count file records attached to storage 0
+     *
+     * @since 1.2.0
+     *
+     * @return int
+     */
+    protected function hasRecordsAttachedToStorageZero()
+    {
+        $result = $this->databaseConnection->exec_SELECTcountRows(
+            'uid',
+            'sys_file',
+            '`storage` = 0 AND `identifier` LIKE \'/fileadmin/_migrated/%\''
+        );
+        if ($result === false) {
+            $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
+        }
+        return $result;
     }
 
     /**
