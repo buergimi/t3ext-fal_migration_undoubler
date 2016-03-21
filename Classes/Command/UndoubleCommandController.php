@@ -314,7 +314,7 @@ class UndoubleCommandController extends AbstractCommandController
     /**
      * Remove files with duplicates inside of the _migrated folder
      *
-     * Removes files with counterparts inside of the _migrated folder and without references to them.
+     * Removes files with duplicates inside of the _migrated folder and without references to them.
      *
      * @since 1.1.0
      *
@@ -348,7 +348,7 @@ class UndoubleCommandController extends AbstractCommandController
             }
             $total = count($this->uidMap);
             $this->infoMessage(
-                'Found ' . $total . ' records in _migrated that have counterparts inside of there'
+                'Found ' . $total . ' records in _migrated that have duplicates inside of there'
             );
 
             // Do a dry-runs to find still existing references. Just to be sure you weren't lying to us!
@@ -405,7 +405,7 @@ class UndoubleCommandController extends AbstractCommandController
     /**
      * Remove files with duplicates outside of the _migrated folder
      *
-     * Removes files with counterparts outside of the _migrated folder and without references to them.
+     * Removes files with duplicates outside of the _migrated folder and without references to them.
      *
      * @since 1.1.0
      *
@@ -439,7 +439,7 @@ class UndoubleCommandController extends AbstractCommandController
             }
             $total = count($this->uidMap);
             $this->infoMessage(
-                'Found ' . $total . ' records in _migrated that have counterparts inside of there'
+                'Found ' . $total . ' records in _migrated that have duplicates inside of there'
             );
 
             // Do a dry-runs to find still existing references. Just to be sure you weren't lying to us!
