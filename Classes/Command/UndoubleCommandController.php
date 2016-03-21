@@ -164,8 +164,9 @@ class UndoubleCommandController extends AbstractCommandController
         $this->horizontalLine('', 22);
         $this->message('Remove  ' . $this->successString($migratedFileCount - $migratedUniqueFileCount) . ' (' . $this->errorString(GeneralUtility::formatSize($this->getPossibleSpaceSavedInMigratedFolder())) . ')');
         $this->message();
-        $this->warningMessage('Top 20 files with most duplicates');
-        $mostDuplicates = $this->getFilesWithMostDuplicates();
+        $limit = 20;
+        $this->warningMessage('Top ' . $limit . ' files with most duplicates');
+        $mostDuplicates = $this->getFilesWithMostDuplicates($limit);
         foreach ($mostDuplicates as $row) {
             $this->message($this->successString($row['total']) . ' ' . $row['identifier']);
         }
@@ -859,9 +860,11 @@ class UndoubleCommandController extends AbstractCommandController
      *
      * @since 1.2.0
      *
+     * @param integer $limit
+     *
      * @return array
      */
-    protected function getFilesWithMostDuplicates()
+    protected function getFilesWithMostDuplicates($limit = 20)
     {
         $result = $this->databaseConnection->sql_query('SELECT
               identifier,
@@ -869,7 +872,7 @@ class UndoubleCommandController extends AbstractCommandController
             FROM sys_file
             GROUP BY sha1
             ORDER BY total DESC
-            LIMIT 20;
+            LIMIT ' . $limit . ';
         ;');
         $return = [];
         if ($result === null) {
@@ -1206,7 +1209,7 @@ class UndoubleCommandController extends AbstractCommandController
         if ($result === null) {
             $this->errorMessage('Database query failed. Error was: ' . $this->databaseConnection->sql_error());
         }
-        $resultCount = $this->databaseConnection->sql_num_rows($result);
+        $resultCount = $this->databaseConnection->sql_affected_rows();
         $this->databaseConnection->sql_free_result($result);
         return $resultCount;
     }
@@ -1233,7 +1236,11 @@ class UndoubleCommandController extends AbstractCommandController
     }
 
     /**
-     * Populate mapping of old-uid => new-uid indexed with old-uid map and mapping of old-uid to identifier map
+     * Populate mapping of old-uid => new-uid indexed with old-uid map and mapping of old-uid to identifier map for
+     * files that have duplicates.
+     *
+     * Fetch all the documents from the migrated folder. If the documents sha1 is available in the sha1Map AND if the
+     * uid found in the sha1Map is not equal to the document uid, THEN we have a duplicate file.
      *
      * These are most likely to be the original files
      *
@@ -1246,7 +1253,7 @@ class UndoubleCommandController extends AbstractCommandController
         $documents = $this->getDocumentsInMigratedFolder();
         foreach ($documents as $document) {
             $document['uid'] = (int)$document['uid'];
-            if ($document['uid'] !== $this->sha1Map[$document['sha1']]) {
+            if (isset($this->sha1Map[$document['sha1']]) && $document['uid'] !== $this->sha1Map[$document['sha1']]) {
                 $this->uidMap[$document['uid']] = (int)$this->sha1Map[$document['sha1']];
                 $this->identifierMap[$document['uid']] = $document['identifier'];
             }
