@@ -5,55 +5,58 @@
 
 .. include:: Includes.txt
 
-
 .. _start:
 
-==============
-fal_migration_undoubler
-==============
+=======================
+FAL Migration Undoubler
+=======================
 
-:Extension key:
-      fal_migration_undoubler
+.. only:: html
 
-:Version:
-      1.1.0
+	:Classification:
+		fal_migration_undoubler
 
-:Language:
-      en
+	:Version:
+			|release|
 
-:Description:
-      Manual for FAL _migration undoubler.
+	:Language:
+			en
 
-:Keywords:
-      fal_migration_undoubler, FAL, cleaner
+	:Description:
+			Finds documents outside of the _migrated folder, updates references to point to those files and removes the redundant file from the _migrated folder.
 
-:Copyright:
-      2016
+	:Keywords:
+			migration, FAL, cleaner
 
-:Author:
-      Michiel Roos
+	:Copyright:
+			2016
 
-:License:
-      Open Content License available from `www.opencontent.org/opl.shtml
-      <http://www.opencontent.org/opl.shtml>`_
+	:Author:
+			Michiel Roos
 
-The content of this document is related to TYPO3,
+	:Email:
+			michiel@maxserv.com
 
-a GNU/GPL CMS/Framework available from `www.typo3.org
-<http://www.typo3.org/>`_
+	:License:
+			This document is published under the Open Content License
+			available from http://www.opencontent.org/opl.shtml
+
+	:Rendered:
+			|today|
+
+	The content of this document is related to TYPO3
+	a GNU/GPL CMS/Framework available from `www.typo3.org <http://www.typo3.org/>`_.
 
 
+	**Table of Contents**
 
+	.. toctree::
+		:maxdepth: 5
+		:titlesonly:
+		:glob:
 
-**Table of Contents**
-
-.. toctree::
-   :maxdepth: 5
-   :titlesonly:
-   :glob:
-
-   WhatDoesItDo/Index
-   Usage/Index
-   KnownProblems/Index
-   ToDo/Index
+		WhatDoesItDo/Index
+		Usage/Index
+		KnownProblems/Index
+		ToDo/Index
 

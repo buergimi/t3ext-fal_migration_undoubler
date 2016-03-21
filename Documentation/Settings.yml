@@ -6,8 +6,9 @@
 conf.py:
   copyright: 2016
   project: FAL Migration Undoubler
-  version: 1.0.0
-  release: 7
+  release: 1.2.0
+  latex_documents:
+  - - Index
   intersphinx_mapping:
     t3tsref:
     - http://docs.typo3.org/typo3cms/TyposcriptReference/

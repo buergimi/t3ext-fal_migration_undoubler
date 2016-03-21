@@ -27,8 +27,8 @@ In the installations I checked that with, these entries were not referenced anyw
 
 Afterwards, the extension worked correctly.
 
-Report problemns
-================
+Report problems
+===============
 If you find any problems, please report them to us by email.
 
 Please take some time and make a proper report stating at least:
