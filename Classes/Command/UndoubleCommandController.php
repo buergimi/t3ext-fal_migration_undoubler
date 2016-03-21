@@ -283,7 +283,7 @@ class UndoubleCommandController extends AbstractCommandController
             }
             $total = count($this->uidMap);
             $this->infoMessage(
-                'Found ' . $total . ' records in _migrated folder with references that have counterparts outside of there'
+                'Found ' . $total . ' duplicate records in _migrated folder'
             );
             $updateCount = 0;
             foreach ($this->uidMap as $oldUid => $newUid) {
