@@ -1,6 +1,8 @@
 # TYPO3 extension: fal_migration_undoubler
 Finds documents outside of the _migrated folder, updates references to point to those files and removes the redundant file from the _migrated folder.
 
+[![Latest Stable Version](https://poser.pugx.org/maxserv/fal_migration_undoubler/v/stable)](https://packagist.org/packages/maxserv/fal_migration_undoubler) [![Total Downloads](https://poser.pugx.org/maxserv/fal_migration_undoubler/downloads)](https://packagist.org/packages/maxserv/fal_migration_undoubler) [![Latest Unstable Version](https://poser.pugx.org/maxserv/fal_migration_undoubler/v/unstable)](https://packagist.org/packages/maxserv/fal_migration_undoubler) [![License](https://poser.pugx.org/maxserv/fal_migration_undoubler/license)](https://packagist.org/packages/maxserv/fal_migration_undoubler)
+
 Clone it
 
 ```bash
