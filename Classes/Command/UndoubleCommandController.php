@@ -695,6 +695,7 @@ class UndoubleCommandController extends AbstractCommandController
             FROM sys_file
             WHERE
               identifier LIKE "/_migrated/%"
+        		  AND identifier NOT LIKE "/_migrated/RTE/%"
             ORDER BY
               uid
         ;');
@@ -754,6 +755,7 @@ class UndoubleCommandController extends AbstractCommandController
               sha1
             FROM sys_file
             WHERE identifier LIKE "/_migrated/%"
+        		  AND identifier NOT LIKE "/_migrated/RTE/%"
             ORDER BY uid
         ;');
         $rows = array();
@@ -807,6 +809,7 @@ class UndoubleCommandController extends AbstractCommandController
               COUNT(*) AS total
             FROM sys_file
             WHERE identifier LIKE "/_migrated/%"
+              AND identifier NOT LIKE "/_migrated/RTE/%"
         ;');
         $count = 0;
         if ($result === null) {
@@ -864,6 +867,7 @@ class UndoubleCommandController extends AbstractCommandController
               COUNT(uid) AS total
             FROM sys_file
             WHERE identifier LIKE "/_migrated/%"
+              AND identifier NOT LIKE "/_migrated/RTE/%"
             GROUP BY sha1;
         ;');
         $count = 0;
@@ -951,6 +955,7 @@ class UndoubleCommandController extends AbstractCommandController
               uid
             FROM sys_file
             WHERE identifier LIKE "/_migrated/%"
+              AND identifier NOT LIKE "/_migrated/RTE/%"
             GROUP BY sha1
         ;');
         $count = 0;
